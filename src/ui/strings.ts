@@ -24,6 +24,13 @@ export const strings = {
     patchbay: 'Patchbay',
     devices: 'Devices',
     connections: 'Connections',
+    portability: 'Portability',
+  },
+  portability: {
+    title: 'Data Portability',
+    subtitle: 'Export and import workspace bundles with preview and conflict controls.',
+    exportTitle: 'Export',
+    importTitle: 'Import',
   },
   confirm: {
     confirm: 'Confirm',

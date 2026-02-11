@@ -13,6 +13,7 @@ import AuthScreen from './components/AuthScreen.vue'
 import AuthDiagnosticsPanel from './components/AuthDiagnosticsPanel.vue'
 import AccessDisabledScreen from './components/AccessDisabledScreen.vue'
 import AdminAccessPanel from './components/admin/AdminAccessPanel.vue'
+import DataPortability from './components/settings/DataPortability.vue'
 import ToastHost from './ui/ToastHost.vue'
 import { strings } from './ui/strings'
 import { store } from './store'
@@ -135,6 +136,7 @@ const notifyComingSoon = () => {
 }
 
 const isAdminRoute = computed(() => route.path === '/admin/access')
+const isPortabilityRoute = computed(() => route.path === '/settings/portability')
 const canAccessAdmin = computed(() => isAdminRole(role.value))
 
 const goToTab = (tab: 'patchbay' | 'devices' | 'connections') => {
@@ -147,6 +149,10 @@ const goToTab = (tab: 'patchbay' | 'devices' | 'connections') => {
 const goToAdmin = () => {
   if (!canAccessAdmin.value) return
   void router.push('/admin/access')
+}
+
+const goToPortability = () => {
+  void router.push('/settings/portability')
 }
 </script>
 
@@ -212,7 +218,7 @@ const goToAdmin = () => {
       <div v-if="authContextLoading" class="loading-overlay">
         <div class="loading-card">Loading access...</div>
       </div>
-      <AccessDisabledScreen v-else-if="!hasAppAccess && !isAdminRoute" />
+      <AccessDisabledScreen v-else-if="!hasAppAccess && !isAdminRoute && !isPortabilityRoute" />
       <div v-else class="app-shell">
         <div v-if="store.loading" class="loading-overlay">
           <div class="loading-card">{{ t.app.loadingData }}</div>
@@ -237,7 +243,7 @@ const goToAdmin = () => {
                 class="ghost-btn"
                 :disabled="!canExport"
                 :title="!canExport ? t.app.exportDisabled : ''"
-                @click="notifyComingSoon"
+                @click="goToPortability"
               >
                 {{ t.app.export }}
               </button>
@@ -249,22 +255,25 @@ const goToAdmin = () => {
           <div class="topbar-right">
             <nav class="main-nav">
               <button
-                :class="{ active: !isAdminRoute && store.activeTab === 'patchbay' }"
+                :class="{ active: !isAdminRoute && !isPortabilityRoute && store.activeTab === 'patchbay' }"
                 @click="goToTab('patchbay')"
               >
                 {{ t.nav.patchbay }}
               </button>
               <button
-                :class="{ active: !isAdminRoute && store.activeTab === 'devices' }"
+                :class="{ active: !isAdminRoute && !isPortabilityRoute && store.activeTab === 'devices' }"
                 @click="goToTab('devices')"
               >
                 {{ t.nav.devices }}
               </button>
               <button
-                :class="{ active: !isAdminRoute && store.activeTab === 'connections' }"
+                :class="{ active: !isAdminRoute && !isPortabilityRoute && store.activeTab === 'connections' }"
                 @click="goToTab('connections')"
               >
                 {{ t.nav.connections }}
+              </button>
+              <button :class="{ active: isPortabilityRoute }" @click="goToPortability">
+                {{ t.nav.portability }}
               </button>
               <button
                 v-if="canAccessAdmin"
@@ -289,6 +298,9 @@ const goToAdmin = () => {
               <h2>Not authorized</h2>
               <p>You must be an organization admin to access this section.</p>
             </div>
+          </template>
+          <template v-else-if="isPortabilityRoute">
+            <DataPortability />
           </template>
           <template v-else>
             <PatchBayGrid v-if="store.activeTab === 'patchbay'" />

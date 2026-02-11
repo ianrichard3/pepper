@@ -19,6 +19,11 @@ const router = createRouter({
         requiresAdmin: true,
       },
     },
+    {
+      path: '/settings/portability',
+      component: App,
+      name: 'settings-portability',
+    },
   ],
 })
 
