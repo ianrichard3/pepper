@@ -11,6 +11,9 @@ export const quotaStore = reactive({
   aiDetectionUsedToday: null as number | null,
   aiDetectionRemaining: null as number | null,
   aiDetectionLimit: null as number | null,
+  aiIntentUsedToday: null as number | null,
+  aiIntentRemaining: null as number | null,
+  aiIntentLimit: null as number | null,
   usageResetAt: null as string | null,
 
   updateFromAuthContext(context: AuthContextResponse | null) {
@@ -29,6 +32,23 @@ export const quotaStore = reactive({
     if (effectiveLimit !== null && used !== null) {
       this.aiDetectionRemaining = Math.max(effectiveLimit - used, 0)
       this.aiDetectionLimit = effectiveLimit
+    }
+
+    const intentLimit = typeof context?.limits?.ai_intent_per_month === 'number'
+      ? context?.limits?.ai_intent_per_month
+      : null
+    this.aiIntentLimit = intentLimit
+
+    const intentUsage = context?.usage?.ai_intent
+    const intentUsed = typeof intentUsage?.used === 'number' ? intentUsage.used : null
+    if (intentUsed !== null) {
+      this.aiIntentUsedToday = intentUsed
+    }
+
+    const effectiveIntentLimit = typeof intentUsage?.limit === 'number' ? intentUsage.limit : intentLimit
+    if (effectiveIntentLimit !== null && intentUsed !== null) {
+      this.aiIntentRemaining = Math.max(effectiveIntentLimit - intentUsed, 0)
+      this.aiIntentLimit = effectiveIntentLimit
     }
   },
 
@@ -69,6 +89,9 @@ export const quotaStore = reactive({
     this.aiDetectionUsedToday = null
     this.aiDetectionRemaining = null
     this.aiDetectionLimit = null
+    this.aiIntentUsedToday = null
+    this.aiIntentRemaining = null
+    this.aiIntentLimit = null
     this.usageResetAt = null
   },
 })

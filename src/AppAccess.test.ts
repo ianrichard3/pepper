@@ -1,6 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createApp, nextTick, ref, h, reactive } from 'vue'
 
+vi.mock('vue-router', () => ({
+  useRoute: () => reactive({ path: '/' }),
+  useRouter: () => ({ push: vi.fn() }),
+}))
+
 vi.mock('@clerk/vue', () => ({
   SignedIn: {
     setup(_props: any, { slots }: any) {

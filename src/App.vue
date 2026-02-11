@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, watchEffect, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { SignedIn, SignedOut, UserButton, OrganizationSwitcher, useAuth, useClerk } from '@clerk/vue'
 import { registerTokenGetter } from './lib/authToken'
 import { useAuthz } from './lib/authz'
@@ -11,12 +12,16 @@ import ConnectionFinder from './components/ConnectionFinder.vue'
 import AuthScreen from './components/AuthScreen.vue'
 import AuthDiagnosticsPanel from './components/AuthDiagnosticsPanel.vue'
 import AccessDisabledScreen from './components/AccessDisabledScreen.vue'
+import AdminAccessPanel from './components/admin/AdminAccessPanel.vue'
 import ToastHost from './ui/ToastHost.vue'
 import { strings } from './ui/strings'
 import { store } from './store'
 import logoUrl from './assets/el-riche-mark.svg'
+import { isAdminRole } from './lib/adminAuth'
 
 const t = strings
+const route = useRoute()
+const router = useRouter()
 const { isLoaded, isSignedIn, getToken, orgId } = useAuth()
 const clerk = useClerk()
 const {
@@ -24,6 +29,7 @@ const {
   authContextLoaded,
   authContextLoading,
   authContextError,
+  role,
   loadAuthContext,
   resetAuthContext,
 } = useAuthz()
@@ -127,6 +133,21 @@ const showAuthContextBanner = computed(() => {
 const notifyComingSoon = () => {
   store.pushToast({ type: 'info', message: t.app.comingSoon })
 }
+
+const isAdminRoute = computed(() => route.path === '/admin/access')
+const canAccessAdmin = computed(() => isAdminRole(role.value))
+
+const goToTab = (tab: 'patchbay' | 'devices' | 'connections') => {
+  store.setTab(tab)
+  if (route.path !== '/') {
+    void router.push('/')
+  }
+}
+
+const goToAdmin = () => {
+  if (!canAccessAdmin.value) return
+  void router.push('/admin/access')
+}
 </script>
 
 <template>
@@ -191,7 +212,7 @@ const notifyComingSoon = () => {
       <div v-if="authContextLoading" class="loading-overlay">
         <div class="loading-card">Loading access...</div>
       </div>
-      <AccessDisabledScreen v-else-if="!hasAppAccess" />
+      <AccessDisabledScreen v-else-if="!hasAppAccess && !isAdminRoute" />
       <div v-else class="app-shell">
         <div v-if="store.loading" class="loading-overlay">
           <div class="loading-card">{{ t.app.loadingData }}</div>
@@ -228,22 +249,29 @@ const notifyComingSoon = () => {
           <div class="topbar-right">
             <nav class="main-nav">
               <button
-                :class="{ active: store.activeTab === 'patchbay' }"
-                @click="store.setTab('patchbay')"
+                :class="{ active: !isAdminRoute && store.activeTab === 'patchbay' }"
+                @click="goToTab('patchbay')"
               >
                 {{ t.nav.patchbay }}
               </button>
               <button
-                :class="{ active: store.activeTab === 'devices' }"
-                @click="store.setTab('devices')"
+                :class="{ active: !isAdminRoute && store.activeTab === 'devices' }"
+                @click="goToTab('devices')"
               >
                 {{ t.nav.devices }}
               </button>
               <button
-                :class="{ active: store.activeTab === 'connections' }"
-                @click="store.setTab('connections')"
+                :class="{ active: !isAdminRoute && store.activeTab === 'connections' }"
+                @click="goToTab('connections')"
               >
                 {{ t.nav.connections }}
+              </button>
+              <button
+                v-if="canAccessAdmin"
+                :class="{ active: isAdminRoute }"
+                @click="goToAdmin"
+              >
+                Admin
               </button>
             </nav>
             <div class="user-menu">
@@ -253,9 +281,20 @@ const notifyComingSoon = () => {
         </header>
 
         <main class="content-area">
-          <PatchBayGrid v-if="store.activeTab === 'patchbay'" />
-          <DevicesManager v-if="store.activeTab === 'devices'" />
-          <ConnectionFinder v-if="store.activeTab === 'connections'" />
+          <template v-if="isAdminRoute">
+            <div v-if="canAccessAdmin" class="admin-content">
+              <AdminAccessPanel />
+            </div>
+            <div v-else class="not-authorized">
+              <h2>Not authorized</h2>
+              <p>You must be an organization admin to access this section.</p>
+            </div>
+          </template>
+          <template v-else>
+            <PatchBayGrid v-if="store.activeTab === 'patchbay'" />
+            <DevicesManager v-if="store.activeTab === 'devices'" />
+            <ConnectionFinder v-if="store.activeTab === 'connections'" />
+          </template>
         </main>
 
         <AuthDiagnosticsPanel v-if="showAuthDiagnostics" />
@@ -547,6 +586,17 @@ const notifyComingSoon = () => {
   overflow: hidden;
   position: relative;
   padding: var(--space-5);
+}
+
+.admin-content {
+  height: 100%;
+  overflow: auto;
+}
+
+.not-authorized {
+  display: grid;
+  gap: var(--space-2);
+  align-content: start;
 }
 
 .loading-overlay {

@@ -13,6 +13,7 @@ import {
   type IntentParseErrorData,
   type ConflictErrorData,
 } from '@/types/suggestions'
+import type { FeatureKey, LimitKey } from './entitlementKeys'
 
 // API Types (snake_case from backend)
 export interface ApiPatchbayPoint {
@@ -81,6 +82,52 @@ export interface AuthContextResponse {
   features?: Record<string, boolean>
   limits?: Record<string, number>
   usage?: Record<string, { feature_key: string; period: number; used: number; limit?: number | null }>
+  [key: string]: unknown
+}
+
+export interface AdminEntitlementsPayload {
+  enabled?: boolean
+  plan?: string | null
+  features?: Partial<Record<FeatureKey, boolean>>
+  limits?: Partial<Record<LimitKey, number>>
+}
+
+export interface AdminWorkspaceEntitlementsResponse {
+  workspace_id: number
+  enabled?: boolean
+  allowlisted?: boolean
+  plan?: string | null
+  features?: Partial<Record<FeatureKey, boolean>>
+  limits?: Partial<Record<LimitKey, number>>
+  [key: string]: unknown
+}
+
+export interface AdminUserOverrideResponse {
+  workspace_id: number
+  clerk_user_id: string
+  entitlements?: {
+    features?: Partial<Record<FeatureKey, boolean>>
+    limits?: Partial<Record<LimitKey, number>>
+  } | null
+  [key: string]: unknown
+}
+
+export interface AdminUsageResponse {
+  workspace_id: number
+  feature: string
+  period: number
+  used: number
+  limit?: number | null
+  remaining?: number | null
+  [key: string]: unknown
+}
+
+export interface AdminWorkspaceMember {
+  clerk_user_id: string
+  role?: string | null
+  first_name?: string | null
+  last_name?: string | null
+  email?: string | null
   [key: string]: unknown
 }
 
@@ -204,6 +251,63 @@ export const api = {
 
   async getAuthContext(): Promise<AuthContextResponse> {
     return requestJson<AuthContextResponse>('/me/entitlements')
+  },
+
+  async getWorkspaceEntitlementsAdmin(workspaceId: number): Promise<AdminWorkspaceEntitlementsResponse> {
+    return requestJson<AdminWorkspaceEntitlementsResponse>(`/admin/workspaces/${workspaceId}/entitlements`)
+  },
+
+  async updateWorkspaceEntitlementsAdmin(
+    workspaceId: number,
+    payload: AdminEntitlementsPayload
+  ): Promise<AdminWorkspaceEntitlementsResponse> {
+    return requestJson<AdminWorkspaceEntitlementsResponse>(`/admin/workspaces/${workspaceId}/entitlements`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async allowlistWorkspace(workspaceId: number, reason?: string): Promise<{ allowlisted: boolean; [key: string]: unknown }> {
+    return requestJson<{ allowlisted: boolean; [key: string]: unknown }>(`/admin/workspaces/${workspaceId}/allowlist`, {
+      method: 'POST',
+      body: JSON.stringify(reason ? { reason } : {}),
+    })
+  },
+
+  async delistWorkspace(workspaceId: number): Promise<{ allowlisted: boolean; [key: string]: unknown }> {
+    return requestJson<{ allowlisted: boolean; [key: string]: unknown }>(`/admin/workspaces/${workspaceId}/allowlist`, {
+      method: 'DELETE',
+    })
+  },
+
+  async getWorkspaceMembersAdmin(workspaceId: number): Promise<AdminWorkspaceMember[]> {
+    return requestJson<AdminWorkspaceMember[]>(`/admin/workspaces/${workspaceId}/members`)
+  },
+
+  async getUserOverride(workspaceId: number, clerkUserId: string): Promise<AdminUserOverrideResponse> {
+    return requestJson<AdminUserOverrideResponse>(`/admin/workspaces/${workspaceId}/users/${clerkUserId}/entitlements`)
+  },
+
+  async putUserOverride(
+    workspaceId: number,
+    clerkUserId: string,
+    payload: AdminEntitlementsPayload
+  ): Promise<AdminUserOverrideResponse> {
+    return requestJson<AdminUserOverrideResponse>(`/admin/workspaces/${workspaceId}/users/${clerkUserId}/entitlements`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async deleteUserOverride(workspaceId: number, clerkUserId: string): Promise<{ deleted: boolean; [key: string]: unknown }> {
+    return requestJson<{ deleted: boolean; [key: string]: unknown }>(`/admin/workspaces/${workspaceId}/users/${clerkUserId}/entitlements`, {
+      method: 'DELETE',
+    })
+  },
+
+  async getWorkspaceUsage(workspaceId: number, feature: string, period: number): Promise<AdminUsageResponse> {
+    const params = new URLSearchParams({ feature, period: String(period) })
+    return requestJson<AdminUsageResponse>(`/admin/workspaces/${workspaceId}/usage?${params.toString()}`)
   },
 
   // Fetch image with authentication and return blob URL

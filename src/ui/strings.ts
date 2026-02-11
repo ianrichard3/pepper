@@ -157,6 +157,10 @@ export const strings = {
   connections: {
     title: 'Connection Finder',
     subtitle: 'Select two device ports to see which patch points to cable.',
+    tabs: {
+      finder: 'From / To',
+      suggestions: 'Suggestions',
+    },
     origin: 'Origin',
     destination: 'Destination',
     sideALabel: 'A',

@@ -37,6 +37,7 @@ const searchB = ref('')
 const showDropdownA = ref(false)
 const showDropdownB = ref(false)
 const showReturnHint = ref(false)
+const activeInnerTab = ref<'finder' | 'suggestions'>('finder')
 
 const mappingChoice = ref<{ a: number | null; b: number | null }>({ a: null, b: null })
 
@@ -263,205 +264,227 @@ const copyInstruction = async () => {
     </div>
 
     <div class="finder-body">
-      <SuggestionsPanel />
-      <div class="selectors-container">
-        <div class="selector-box">
-          <label class="selector-label">
-            <span class="label-icon">{{ t.connections.sideALabel }}</span>
-            {{ t.connections.origin }}
-          </label>
-          <div class="search-wrapper">
-            <input
-              v-model="searchA"
-              @focus="showDropdownA = true"
-              @input="showDropdownA = true; store.clearConnectionFinderSelection('a')"
-              :placeholder="t.connections.searchPlaceholder"
-              class="search-input"
-            />
-            <button
-              v-if="selectionA.port"
-              class="clear-btn"
-              :aria-label="t.connections.clearSelection"
-              @click="clearSelectionA"
-            >
-              {{ t.app.closeSymbol }}
-            </button>
-          </div>
-
-          <div v-if="showDropdownA && !selectionA.port" class="dropdown">
-            <div
-              v-for="item in filteredPortsA"
-              :key="`${item.device.id}-${item.port.id}`"
-              class="dropdown-item"
-              @click="selectPortA(item.device, item.port)"
-            >
-              <span class="device-name">{{ item.device.name }}</span>
-              <span class="port-info">
-                <span class="port-label">{{ item.port.label }}</span>
-                <span class="port-type" :class="item.port.type.toLowerCase()">
-                  {{ t.devices.portTypes[item.port.type] }}
-                </span>
-                <span v-if="item.port.patchbayId" class="patch-id">#{{ item.port.patchbayId }}</span>
-                <span v-else class="not-linked">{{ t.connections.unlinked }}</span>
-              </span>
-            </div>
-            <div v-if="filteredPortsA.length === 0" class="no-results">
-              {{ t.connections.noResults }}
-            </div>
-          </div>
-
-          <div v-if="selectionA.port" class="selection-info">
-            <div class="selected-device">{{ selectionA.device?.name }}</div>
-            <div class="selected-port">
-              {{ selectionA.port.label }}
-              <span class="port-type" :class="selectionA.port.type.toLowerCase()">
-                {{ t.devices.portTypes[selectionA.port.type] }}
-              </span>
-            </div>
-            <div v-if="selectionA.port.patchbayId" class="patch-number">
-              {{ t.connections.patchbayLabel }}: <strong>#{{ selectionA.port.patchbayId }}</strong>
-            </div>
-            <div v-else class="not-linked-warning">{{ t.connections.notLinkedWarning }}</div>
-          </div>
-        </div>
-
-        <button class="swap-btn" :title="t.connections.swapTitle" @click="swapSelections">
-          <span>{{ t.connections.swapLabel }}</span>
+      <div class="inner-tabs">
+        <button
+          class="inner-tab-btn"
+          :class="{ active: activeInnerTab === 'finder' }"
+          @click="activeInnerTab = 'finder'"
+        >
+          {{ t.connections.tabs.finder }}
         </button>
+        <button
+          class="inner-tab-btn"
+          :class="{ active: activeInnerTab === 'suggestions' }"
+          @click="activeInnerTab = 'suggestions'"
+        >
+          {{ t.connections.tabs.suggestions }}
+        </button>
+      </div>
 
-        <div class="selector-box">
-          <label class="selector-label">
-            <span class="label-icon">{{ t.connections.sideBLabel }}</span>
-            {{ t.connections.destination }}
-          </label>
-          <div class="search-wrapper">
-            <input
-              v-model="searchB"
-              @focus="showDropdownB = true"
-              @input="showDropdownB = true; store.clearConnectionFinderSelection('b')"
-              :placeholder="t.connections.searchPlaceholder"
-              class="search-input"
-            />
-            <button
-              v-if="selectionB.port"
-              class="clear-btn"
-              :aria-label="t.connections.clearSelection"
-              @click="clearSelectionB"
-            >
-              {{ t.app.closeSymbol }}
-            </button>
-          </div>
+      <div v-if="activeInnerTab === 'finder'">
+        <div class="selectors-container">
+          <div class="selector-box">
+            <label class="selector-label">
+              <span class="label-icon">{{ t.connections.sideALabel }}</span>
+              {{ t.connections.origin }}
+            </label>
+            <div class="search-wrapper">
+              <input
+                v-model="searchA"
+                @focus="showDropdownA = true"
+                @input="showDropdownA = true; store.clearConnectionFinderSelection('a')"
+                :placeholder="t.connections.searchPlaceholder"
+                class="search-input"
+              />
+              <button
+                v-if="selectionA.port"
+                class="clear-btn"
+                :aria-label="t.connections.clearSelection"
+                @click="clearSelectionA"
+              >
+                {{ t.app.closeSymbol }}
+              </button>
+            </div>
 
-          <div v-if="showDropdownB && !selectionB.port" class="dropdown">
-            <div
-              v-for="item in filteredPortsB"
-              :key="`${item.device.id}-${item.port.id}`"
-              class="dropdown-item"
-              @click="selectPortB(item.device, item.port)"
-            >
-              <span class="device-name">{{ item.device.name }}</span>
-              <span class="port-info">
-                <span class="port-label">{{ item.port.label }}</span>
-                <span class="port-type" :class="item.port.type.toLowerCase()">
-                  {{ t.devices.portTypes[item.port.type] }}
+            <div v-if="showDropdownA && !selectionA.port" class="dropdown">
+              <div
+                v-for="item in filteredPortsA"
+                :key="`${item.device.id}-${item.port.id}`"
+                class="dropdown-item"
+                @click="selectPortA(item.device, item.port)"
+              >
+                <span class="device-name">{{ item.device.name }}</span>
+                <span class="port-info">
+                  <span class="port-label">{{ item.port.label }}</span>
+                  <span class="port-type" :class="item.port.type.toLowerCase()">
+                    {{ t.devices.portTypes[item.port.type] }}
+                  </span>
+                  <span v-if="item.port.patchbayId" class="patch-id">#{{ item.port.patchbayId }}</span>
+                  <span v-else class="not-linked">{{ t.connections.unlinked }}</span>
                 </span>
-                <span v-if="item.port.patchbayId" class="patch-id">#{{ item.port.patchbayId }}</span>
-                <span v-else class="not-linked">{{ t.connections.unlinked }}</span>
-              </span>
+              </div>
+              <div v-if="filteredPortsA.length === 0" class="no-results">
+                {{ t.connections.noResults }}
+              </div>
             </div>
-            <div v-if="filteredPortsB.length === 0" class="no-results">
-              {{ t.connections.noResults }}
+
+            <div v-if="selectionA.port" class="selection-info">
+              <div class="selected-device">{{ selectionA.device?.name }}</div>
+              <div class="selected-port">
+                {{ selectionA.port.label }}
+                <span class="port-type" :class="selectionA.port.type.toLowerCase()">
+                  {{ t.devices.portTypes[selectionA.port.type] }}
+                </span>
+              </div>
+              <div v-if="selectionA.port.patchbayId" class="patch-number">
+                {{ t.connections.patchbayLabel }}: <strong>#{{ selectionA.port.patchbayId }}</strong>
+              </div>
+              <div v-else class="not-linked-warning">{{ t.connections.notLinkedWarning }}</div>
             </div>
           </div>
 
-          <div v-if="selectionB.port" class="selection-info">
-            <div class="selected-device">{{ selectionB.device?.name }}</div>
-            <div class="selected-port">
-              {{ selectionB.port.label }}
-              <span class="port-type" :class="selectionB.port.type.toLowerCase()">
-                {{ t.devices.portTypes[selectionB.port.type] }}
-              </span>
+          <button class="swap-btn" :title="t.connections.swapTitle" @click="swapSelections">
+            <span>{{ t.connections.swapLabel }}</span>
+          </button>
+
+          <div class="selector-box">
+            <label class="selector-label">
+              <span class="label-icon">{{ t.connections.sideBLabel }}</span>
+              {{ t.connections.destination }}
+            </label>
+            <div class="search-wrapper">
+              <input
+                v-model="searchB"
+                @focus="showDropdownB = true"
+                @input="showDropdownB = true; store.clearConnectionFinderSelection('b')"
+                :placeholder="t.connections.searchPlaceholder"
+                class="search-input"
+              />
+              <button
+                v-if="selectionB.port"
+                class="clear-btn"
+                :aria-label="t.connections.clearSelection"
+                @click="clearSelectionB"
+              >
+                {{ t.app.closeSymbol }}
+              </button>
             </div>
-            <div v-if="selectionB.port.patchbayId" class="patch-number">
-              {{ t.connections.patchbayLabel }}: <strong>#{{ selectionB.port.patchbayId }}</strong>
+
+            <div v-if="showDropdownB && !selectionB.port" class="dropdown">
+              <div
+                v-for="item in filteredPortsB"
+                :key="`${item.device.id}-${item.port.id}`"
+                class="dropdown-item"
+                @click="selectPortB(item.device, item.port)"
+              >
+                <span class="device-name">{{ item.device.name }}</span>
+                <span class="port-info">
+                  <span class="port-label">{{ item.port.label }}</span>
+                  <span class="port-type" :class="item.port.type.toLowerCase()">
+                    {{ t.devices.portTypes[item.port.type] }}
+                  </span>
+                  <span v-if="item.port.patchbayId" class="patch-id">#{{ item.port.patchbayId }}</span>
+                  <span v-else class="not-linked">{{ t.connections.unlinked }}</span>
+                </span>
+              </div>
+              <div v-if="filteredPortsB.length === 0" class="no-results">
+                {{ t.connections.noResults }}
+              </div>
             </div>
-            <div v-else class="not-linked-warning">{{ t.connections.notLinkedWarning }}</div>
+
+            <div v-if="selectionB.port" class="selection-info">
+              <div class="selected-device">{{ selectionB.device?.name }}</div>
+              <div class="selected-port">
+                {{ selectionB.port.label }}
+                <span class="port-type" :class="selectionB.port.type.toLowerCase()">
+                  {{ t.devices.portTypes[selectionB.port.type] }}
+                </span>
+              </div>
+              <div v-if="selectionB.port.patchbayId" class="patch-number">
+                {{ t.connections.patchbayLabel }}: <strong>#{{ selectionB.port.patchbayId }}</strong>
+              </div>
+              <div v-else class="not-linked-warning">{{ t.connections.notLinkedWarning }}</div>
+            </div>
           </div>
+        </div>
+
+        <div v-if="connectionResult" class="result-container">
+          <div v-if="connectionResult.type === 'success'" class="result success">
+            <div class="result-header">
+              <span class="result-icon">{{ t.connections.successBadge }}</span>
+              <h3>{{ t.connections.resultSuccessTitle }}</h3>
+            </div>
+            <div class="connection-diagram">
+              <div class="patch-point">
+                <span class="patch-number-big">#{{ connectionResult.patchA }}</span>
+                <span class="patch-device">{{ connectionResult.deviceA }}</span>
+                <span class="patch-port">{{ connectionResult.portA }}</span>
+              </div>
+              <div class="connection-line">
+                <span class="cable-icon">{{ t.connections.cableLabel }}</span>
+              </div>
+              <div class="patch-point">
+                <span class="patch-number-big">#{{ connectionResult.patchB }}</span>
+                <span class="patch-device">{{ connectionResult.deviceB }}</span>
+                <span class="patch-port">{{ connectionResult.portB }}</span>
+              </div>
+            </div>
+            <p class="result-instruction">
+              {{ t.connections.resultInstruction(connectionResult.patchA, connectionResult.patchB) }}
+            </p>
+            <div class="result-actions">
+              <button class="primary-btn" @click="goToPatchbay">
+                {{ t.connections.goToPatchbay }}
+              </button>
+              <button class="ghost-btn" @click="copyInstruction">
+                {{ t.connections.copyInstruction }}
+              </button>
+              </div>
+            </div>
+
+          <div v-else class="result warning">
+            <div class="result-header">
+              <span class="result-icon">{{ t.connections.errorBadge }}</span>
+              <h3>{{ t.connections.linkRequiredTitle }}</h3>
+            </div>
+            <p>{{ t.connections.linkRequiredHint }}</p>
+            <div class="missing-grid">
+              <div v-for="missing in connectionResult.missing" :key="missing.side" class="missing-card">
+                <div class="missing-title">
+                  {{ missing.selection.device?.name }} - {{ missing.selection.port?.label }}
+                </div>
+                <div class="missing-actions">
+                  <select v-model="mappingChoice[missing.side]" class="patch-select">
+                    <option :value="null" disabled>{{ t.connections.pickPatchPoint }}</option>
+                    <option
+                      v-for="patch in availablePatchPoints"
+                      :key="patch.id"
+                      :value="patch.id"
+                    >
+                      {{ t.connections.patchPointOption(patch.id, patch.name) }}
+                    </option>
+                  </select>
+                  <button class="primary-btn" @click="mapMissingPort(missing)">
+                    {{ t.connections.mapPort }}
+                  </button>
+                  <button class="ghost-btn" @click="linkNow(missing)">
+                    {{ t.connections.linkNowFor(`${missing.selection.device?.name} - ${missing.selection.port?.label}`) }}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p class="hint">{{ connectionResult.message }}</p>
+          </div>
+        </div>
+
+        <div v-else class="empty-state">
+          <div class="empty-icon">{{ t.connections.emptyIcon }}</div>
+          <p>{{ t.connections.emptyTitle }}</p>
         </div>
       </div>
 
-      <div v-if="connectionResult" class="result-container">
-        <div v-if="connectionResult.type === 'success'" class="result success">
-          <div class="result-header">
-            <span class="result-icon">{{ t.connections.successBadge }}</span>
-            <h3>{{ t.connections.resultSuccessTitle }}</h3>
-          </div>
-          <div class="connection-diagram">
-            <div class="patch-point">
-              <span class="patch-number-big">#{{ connectionResult.patchA }}</span>
-              <span class="patch-device">{{ connectionResult.deviceA }}</span>
-              <span class="patch-port">{{ connectionResult.portA }}</span>
-            </div>
-            <div class="connection-line">
-              <span class="cable-icon">{{ t.connections.cableLabel }}</span>
-            </div>
-            <div class="patch-point">
-              <span class="patch-number-big">#{{ connectionResult.patchB }}</span>
-              <span class="patch-device">{{ connectionResult.deviceB }}</span>
-              <span class="patch-port">{{ connectionResult.portB }}</span>
-            </div>
-          </div>
-          <p class="result-instruction">
-            {{ t.connections.resultInstruction(connectionResult.patchA, connectionResult.patchB) }}
-          </p>
-          <div class="result-actions">
-            <button class="primary-btn" @click="goToPatchbay">
-              {{ t.connections.goToPatchbay }}
-            </button>
-            <button class="ghost-btn" @click="copyInstruction">
-              {{ t.connections.copyInstruction }}
-            </button>
-          </div>
-        </div>
-
-        <div v-else class="result warning">
-          <div class="result-header">
-            <span class="result-icon">{{ t.connections.errorBadge }}</span>
-            <h3>{{ t.connections.linkRequiredTitle }}</h3>
-          </div>
-          <p>{{ t.connections.linkRequiredHint }}</p>
-          <div class="missing-grid">
-            <div v-for="missing in connectionResult.missing" :key="missing.side" class="missing-card">
-              <div class="missing-title">
-                {{ missing.selection.device?.name }} - {{ missing.selection.port?.label }}
-              </div>
-              <div class="missing-actions">
-                <select v-model="mappingChoice[missing.side]" class="patch-select">
-                  <option :value="null" disabled>{{ t.connections.pickPatchPoint }}</option>
-                  <option
-                    v-for="patch in availablePatchPoints"
-                    :key="patch.id"
-                    :value="patch.id"
-                  >
-                    {{ t.connections.patchPointOption(patch.id, patch.name) }}
-                  </option>
-                </select>
-                <button class="primary-btn" @click="mapMissingPort(missing)">
-                  {{ t.connections.mapPort }}
-                </button>
-                <button class="ghost-btn" @click="linkNow(missing)">
-                  {{ t.connections.linkNowFor(`${missing.selection.device?.name} - ${missing.selection.port?.label}`) }}
-                </button>
-              </div>
-            </div>
-          </div>
-          <p class="hint">{{ connectionResult.message }}</p>
-        </div>
-      </div>
-
-      <div v-else class="empty-state">
-        <div class="empty-icon">{{ t.connections.emptyIcon }}</div>
-        <p>{{ t.connections.emptyTitle }}</p>
+      <div v-else class="suggestions-tab">
+        <SuggestionsPanel />
       </div>
     </div>
   </div>
@@ -513,6 +536,32 @@ const copyInstruction = async () => {
   flex: 1;
   overflow-y: auto;
   padding: 0 var(--space-5) var(--space-5);
+}
+
+.inner-tabs {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.inner-tab-btn {
+  background: transparent;
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  border-radius: var(--radius-2);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.inner-tab-btn.active {
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.suggestions-tab {
+  padding-top: var(--space-2);
 }
 
 .selectors-container {

@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import { clerkPlugin } from '@clerk/vue'
 import './style.css'
 import App from './App.vue'
+import router from './router'
 
 // Validar que la env var de Clerk esté presente
 const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY
@@ -21,6 +22,7 @@ if (clerkPubKey) {
   })
 }
 
-app.mount('#app')
+app.use(router)
 
+app.mount('#app')
 
