@@ -24,6 +24,7 @@ export const strings = {
     patchbay: 'Patchbay',
     devices: 'Devices',
     connections: 'Connections',
+    nodeView: 'Node View',
     portability: 'Portability',
   },
   portability: {

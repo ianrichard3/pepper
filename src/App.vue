@@ -9,6 +9,7 @@ import { quotaStore } from './stores/quota'
 import PatchBayGrid from './components/PatchBayGrid.vue'
 import DevicesManager from './components/DevicesManager.vue'
 import ConnectionFinder from './components/ConnectionFinder.vue'
+import NodeGraphMock from './components/NodeGraphMock.vue'
 import AuthScreen from './components/AuthScreen.vue'
 import AuthDiagnosticsPanel from './components/AuthDiagnosticsPanel.vue'
 import AccessDisabledScreen from './components/AccessDisabledScreen.vue'
@@ -139,7 +140,7 @@ const isAdminRoute = computed(() => route.path === '/admin/access')
 const isPortabilityRoute = computed(() => route.path === '/settings/portability')
 const canAccessAdmin = computed(() => isAdminRole(role.value))
 
-const goToTab = (tab: 'patchbay' | 'devices' | 'connections') => {
+const goToTab = (tab: 'patchbay' | 'devices' | 'connections' | 'nodeView') => {
   store.setTab(tab)
   if (route.path !== '/') {
     void router.push('/')
@@ -272,6 +273,12 @@ const goToPortability = () => {
               >
                 {{ t.nav.connections }}
               </button>
+              <button
+                :class="{ active: !isAdminRoute && !isPortabilityRoute && store.activeTab === 'nodeView' }"
+                @click="goToTab('nodeView')"
+              >
+                {{ t.nav.nodeView }}
+              </button>
               <button :class="{ active: isPortabilityRoute }" @click="goToPortability">
                 {{ t.nav.portability }}
               </button>
@@ -306,6 +313,7 @@ const goToPortability = () => {
             <PatchBayGrid v-if="store.activeTab === 'patchbay'" />
             <DevicesManager v-if="store.activeTab === 'devices'" />
             <ConnectionFinder v-if="store.activeTab === 'connections'" />
+            <NodeGraphMock v-if="store.activeTab === 'nodeView'" />
           </template>
         </main>
 

@@ -52,6 +52,40 @@ export interface ApiPortLinkResponse extends ApiPort {
   unlinked_port_id?: string | null
 }
 
+export interface NodeCanvasViewport {
+  x: number
+  y: number
+  zoom: number
+}
+
+export interface NodeCanvasNode {
+  id: string
+  deviceId?: string | null
+  position: {
+    x: number
+    y: number
+  }
+  ui?: Record<string, unknown>
+}
+
+export interface NodeCanvasEdge {
+  id: string
+  source: string
+  target: string
+  sourceHandle?: string | null
+  targetHandle?: string | null
+  meta?: Record<string, unknown>
+}
+
+export interface NodeCanvasState {
+  schemaVersion: '1'
+  nodes: NodeCanvasNode[]
+  edges: NodeCanvasEdge[]
+  viewport?: NodeCanvasViewport | null
+  uiFlags?: Record<string, unknown>
+  updatedAt?: string
+}
+
 export interface ApiDeviceCreate {
   name: string
   type: string
@@ -146,6 +180,17 @@ export type FetchImageFn = (imageUrl: string, options?: { signal?: AbortSignal; 
 export const api = {
   async getState(): Promise<ApiState> {
     return requestJson<ApiState>('/state')
+  },
+
+  async getNodeCanvas(): Promise<{ data: NodeCanvasState | null }> {
+    return requestJson<{ data: NodeCanvasState | null }>('/api/node-canvas')
+  },
+
+  async putNodeCanvas(payload: NodeCanvasState): Promise<{ data: NodeCanvasState }> {
+    return requestJson<{ data: NodeCanvasState }>('/api/node-canvas', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
   },
 
   async createDevice(payload: ApiDeviceCreate): Promise<ApiDevice> {
