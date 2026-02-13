@@ -8,7 +8,6 @@ import { useEntitlements } from './lib/useEntitlements'
 import { quotaStore } from './stores/quota'
 import PatchBayGrid from './components/PatchBayGrid.vue'
 import DevicesManager from './components/DevicesManager.vue'
-import ConnectionFinder from './components/ConnectionFinder.vue'
 import NodeGraphMock from './components/NodeGraphMock.vue'
 import AuthScreen from './components/AuthScreen.vue'
 import AuthDiagnosticsPanel from './components/AuthDiagnosticsPanel.vue'
@@ -140,7 +139,7 @@ const isAdminRoute = computed(() => route.path === '/admin/access')
 const isPortabilityRoute = computed(() => route.path === '/settings/portability')
 const canAccessAdmin = computed(() => isAdminRole(role.value))
 
-const goToTab = (tab: 'patchbay' | 'devices' | 'connections' | 'nodeView') => {
+const goToTab = (tab: 'patchbay' | 'devices' | 'nodeView') => {
   store.setTab(tab)
   if (route.path !== '/') {
     void router.push('/')
@@ -268,12 +267,6 @@ const goToPortability = () => {
                 {{ t.nav.devices }}
               </button>
               <button
-                :class="{ active: !isAdminRoute && !isPortabilityRoute && store.activeTab === 'connections' }"
-                @click="goToTab('connections')"
-              >
-                {{ t.nav.connections }}
-              </button>
-              <button
                 :class="{ active: !isAdminRoute && !isPortabilityRoute && store.activeTab === 'nodeView' }"
                 @click="goToTab('nodeView')"
               >
@@ -312,7 +305,6 @@ const goToPortability = () => {
           <template v-else>
             <PatchBayGrid v-if="store.activeTab === 'patchbay'" />
             <DevicesManager v-if="store.activeTab === 'devices'" />
-            <ConnectionFinder v-if="store.activeTab === 'connections'" />
             <NodeGraphMock v-if="store.activeTab === 'nodeView'" />
           </template>
         </main>

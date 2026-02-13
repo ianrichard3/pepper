@@ -78,7 +78,7 @@ vi.mock('@/lib/authz', () => ({
 
 vi.mock('@/components/PatchBayGrid.vue', () => ({ default: { render: () => h('div') } }))
 vi.mock('@/components/DevicesManager.vue', () => ({ default: { render: () => h('div') } }))
-vi.mock('@/components/ConnectionFinder.vue', () => ({ default: { render: () => h('div') } }))
+vi.mock('@/components/NodeGraphMock.vue', () => ({ default: { render: () => h('div') } }))
 vi.mock('@/components/AuthScreen.vue', () => ({ default: { render: () => h('div') } }))
 vi.mock('@/components/AuthDiagnosticsPanel.vue', () => ({ default: { render: () => h('div') } }))
 vi.mock('@/ui/ToastHost.vue', () => ({ default: { render: () => h('div') } }))

@@ -566,39 +566,38 @@ const cancelDeleteDevice = () => {
   deleteTarget.value = null
 }
 
-const handleLinkPort = (port: DevicePort) => {
+const isPortConnected = (port: DevicePort) => port.patchbayId !== null
+
+const linkPortToPatchbay = (port: DevicePort) => {
   if (!selectedDevice.value) return
-  store.startLinkingPort({
-    portId: port.id,
-    deviceId: selectedDevice.value.id,
-    deviceName: selectedDevice.value.name,
-    portLabel: port.label,
-  }, {
-    returnTab: 'devices',
-    returnPayload: {
-      resume: 'devices',
-      deviceId: selectedDevice.value.id,
+  store.startLinkingPort(
+    {
       portId: port.id,
-      reopenDeviceDetail: true,
+      deviceId: selectedDevice.value.id,
+      deviceName: selectedDevice.value.name,
+      portLabel: port.label,
     },
-  })
+    {
+      returnTab: 'devices',
+      returnPayload: { deviceId: selectedDevice.value.id },
+    },
+  )
 }
 
-const handleUnlinkPort = async (port: DevicePort) => {
+const unlinkPortFromDevice = async (port: DevicePort) => {
   if (!selectedDevice.value) return
-  try {
-    await store.unlinkPort(selectedDevice.value.id, port.id)
-  } catch (err: any) {
-    showError(err.message || strings.toast.unlinkFailed)
-    console.error('Error unlinking port:', err)
-  }
+  await store.unlinkPort(selectedDevice.value.id, port.id)
 }
 
-const handleGoToPatchbay = (port: DevicePort) => {
-  if (!port.patchbayId) return
-  store.highlightedPatchIds = [port.patchbayId]
+const goToPatchPoint = (port: DevicePort) => {
+  if (port.patchbayId === null) return
   store.patchbayFocusId = port.patchbayId
   store.setTab('patchbay')
+}
+
+const patchTargetLabel = (port: DevicePort) => {
+  if (port.patchbayId === null) return ''
+  return t.devices.goToPatch(port.patchbayId)
 }
 
 watch([newDevice, newPorts], () => {
@@ -607,17 +606,11 @@ watch([newDevice, newPorts], () => {
   }
 }, { deep: true })
 
-watch(() => store.activeTab, (tab) => {
-  if (tab !== 'devices') return
-  const payload = store.lastLinkReturnPayload as { resume?: string; deviceId?: number; reopenDeviceDetail?: boolean } | null
-  if (!payload || payload.resume !== 'devices' || !payload.reopenDeviceDetail) return
-  const deviceId = payload.deviceId
+watch(() => store.focusDeviceId, (deviceId) => {
   if (!deviceId) return
-  const device = store.devices.find(item => item.id === deviceId)
-  if (device) {
-    selectedDevice.value = device
-  }
-  store.clearLinkReturnPayload()
+  const device = store.devices.find((item) => item.id === deviceId)
+  if (device) selectedDevice.value = device
+  store.clearDeviceFocus()
 })
 
 onBeforeUnmount(() => {
@@ -773,17 +766,33 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="port-actions">
-                <span v-if="port.patchbayId" class="port-connection">
-                  {{ t.devices.linkedTo(port.patchbayId) }}
-                  <button class="link-action-btn unlink" @click.stop="handleUnlinkPort(port)">{{ t.devices.unlink }}</button>
-                  <button class="link-action-btn ghost" @click.stop="handleGoToPatchbay(port)">
-                    {{ t.devices.goToPatch(port.patchbayId) }}
-                  </button>
+                <span class="port-connection" :class="{ empty: !isPortConnected(port) }">
+                  {{ isPortConnected(port) ? t.devices.connected : t.devices.notConnected }}
                 </span>
-                <span v-else class="port-connection empty">
-                  {{ t.devices.notConnected }}
-                  <button class="link-action-btn link" @click.stop="handleLinkPort(port)">{{ t.devices.link }}</button>
-                </span>
+                <button
+                  v-if="port.patchbayId === null"
+                  class="link-action-btn link"
+                  type="button"
+                  @click="linkPortToPatchbay(port)"
+                >
+                  {{ t.devices.link }}
+                </button>
+                <button
+                  v-else
+                  class="link-action-btn ghost"
+                  type="button"
+                  @click="goToPatchPoint(port)"
+                >
+                  {{ patchTargetLabel(port) }}
+                </button>
+                <button
+                  v-if="port.patchbayId !== null"
+                  class="link-action-btn unlink"
+                  type="button"
+                  @click="unlinkPortFromDevice(port)"
+                >
+                  {{ t.devices.unlink }}
+                </button>
               </div>
             </div>
           </div>
@@ -846,17 +855,33 @@ onBeforeUnmount(() => {
               </div>
 
               <div class="port-actions">
-                <span v-if="port.patchbayId" class="port-connection">
-                  {{ t.devices.linkedTo(port.patchbayId) }}
-                  <button class="link-action-btn unlink" @click.stop="handleUnlinkPort(port)">{{ t.devices.unlink }}</button>
-                  <button class="link-action-btn ghost" @click.stop="handleGoToPatchbay(port)">
-                    {{ t.devices.goToPatch(port.patchbayId) }}
-                  </button>
+                <span class="port-connection" :class="{ empty: !isPortConnected(port) }">
+                  {{ isPortConnected(port) ? t.devices.connected : t.devices.notConnected }}
                 </span>
-                <span v-else class="port-connection empty">
-                  {{ t.devices.notConnected }}
-                  <button class="link-action-btn link" @click.stop="handleLinkPort(port)">{{ t.devices.link }}</button>
-                </span>
+                <button
+                  v-if="port.patchbayId === null"
+                  class="link-action-btn link"
+                  type="button"
+                  @click="linkPortToPatchbay(port)"
+                >
+                  {{ t.devices.link }}
+                </button>
+                <button
+                  v-else
+                  class="link-action-btn ghost"
+                  type="button"
+                  @click="goToPatchPoint(port)"
+                >
+                  {{ patchTargetLabel(port) }}
+                </button>
+                <button
+                  v-if="port.patchbayId !== null"
+                  class="link-action-btn unlink"
+                  type="button"
+                  @click="unlinkPortFromDevice(port)"
+                >
+                  {{ t.devices.unlink }}
+                </button>
               </div>
             </div>
           </div>

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useNodeCanvasPersistence } from '@/composables/useNodeCanvasPersistence'
+import { api, type NodeCanvasConnectionsLookupStatus } from '@/lib/api'
 import {
   fromPersistedState,
   toPersistedState,
@@ -38,6 +39,12 @@ interface CableDraft {
   fromPortId: string;
   cursorX: number;
   cursorY: number;
+}
+
+interface ExistingComponentInfo {
+  componentHandles: string[];
+  componentEdgeIds: number[];
+  componentEdges: NonNullable<NodeCanvasConnectionsLookupStatus['component_edges']>;
 }
 
 const GRID_SIZE = 24
@@ -79,6 +86,7 @@ const addSearchQuery = ref('')
 
 const showConnectModal = ref(false)
 const connectTargetNodeId = ref<string | null>(null)
+const connectConflictMessage = ref<string | null>(null)
 
 const cableDraft = ref<CableDraft | null>(null)
 
@@ -94,6 +102,14 @@ const isHoveringTooltip = ref(false)
 const hoveredCableId = ref<string | null>(null)
 const isHoveringCableTooltip = ref(false)
 const cableHideTimer = ref<ReturnType<typeof setTimeout> | null>(null)
+const isApplyingConnections = ref(false)
+const applyStatusMessage = ref<string | null>(null)
+const applyErrorMessage = ref<string | null>(null)
+const applyUndoPayload = ref<{ created_connection_ids: number[]; deleted_connection_ids: number[] } | null>(null)
+const existingComponentByNodeId = ref<Record<string, ExistingComponentInfo>>({})
+const revealedChainHandles = ref<string[]>([])
+const revealedChainEdgeIds = ref<number[]>([])
+const connectedNoticeNodeId = ref<string | null>(null)
 
 const nodeMap = computed(() => {
   return new Map(nodes.value.map((node) => [node.id, node]))
@@ -248,6 +264,44 @@ const patchbayCatalog = computed<NodeTemplate[]>(() => {
   }))
 })
 
+const findDeviceTemplateByHandle = (handle: string): NodeTemplate | null => {
+  const match = handle.match(/^dev-(\d+)-port-\d+$/)
+  if (!match) return null
+  const deviceId = Number(match[1])
+  const device = store.devices.find((item) => item.id === deviceId)
+  if (!device) return null
+  return {
+    templateId: `device-${device.id}`,
+    title: device.name,
+    subtitle: 'Device',
+    kind: 'device',
+    details: [`Type: ${device.type}`, `Ports: ${device.ports.length}`],
+    ports: device.ports.length
+      ? device.ports.map((port) => ({
+          id: port.id,
+          name: port.label,
+          direction: mapStorePortDirection(port.type),
+        }))
+      : [{ id: `port-${device.id}`, name: 'Port', direction: 'io' as const }],
+  }
+}
+
+const findPatchbayTemplateByHandle = (handle: string): NodeTemplate | null => {
+  const match = handle.match(/^pb-(\d+)$/)
+  if (!match) return null
+  const patchbayId = Number(match[1])
+  const point = store.patchbayNodes.find((item) => item.id === patchbayId)
+  if (!point) return null
+  return {
+    templateId: `patchbay-${point.id}`,
+    title: point.name,
+    subtitle: 'Patchbay Port',
+    kind: 'patchbay',
+    details: [point.description, `Type: ${point.type}`].filter((detail): detail is string => Boolean(detail)),
+    ports: [{ id: `pb-${point.id}`, name: 'Signal', direction: 'io' }],
+  }
+}
+
 const activeCatalog = computed<NodeTemplate[]>(() => {
   return catalogTab.value === 'devices' ? deviceCatalog.value : patchbayCatalog.value
 })
@@ -282,6 +336,28 @@ const persistenceStatusLabel = computed(() => {
   return 'Not saved'
 })
 
+const revealedChainHandleSet = computed(() => new Set(revealedChainHandles.value))
+
+const activeTooltipNodeComponent = computed(() => {
+  if (!activeTooltipNode.value) return null
+  return existingComponentByNodeId.value[activeTooltipNode.value.id] ?? null
+})
+
+const connectedNotice = computed(() => {
+  if (!connectedNoticeNodeId.value) return null
+  const node = nodeMap.value.get(connectedNoticeNodeId.value)
+  if (!node) return null
+  const component = existingComponentByNodeId.value[node.id]
+  if (!component) return null
+  return {
+    nodeId: node.id,
+    nodeTitle: node.title,
+    count: component.componentHandles.length,
+  }
+})
+
+const hasRevealedChain = computed(() => revealedChainHandles.value.length > 0)
+
 const getNodeClass = (kind: NodeKind) => {
   return {
     device: kind === 'device',
@@ -302,6 +378,38 @@ const mapStorePortDirection = (type: string): NodePort['direction'] => {
   if (type === 'Input') return 'in'
   if (type === 'Output') return 'out'
   return 'io'
+}
+
+const isLookupHandle = (value: string) => {
+  return value.startsWith('dev-') || /^pb-\d+$/.test(value)
+}
+
+const handleFromEndpoint = (endpointType: 'device_port' | 'patchbay_point', endpointId: string) => {
+  if (endpointType === 'device_port') return endpointId
+  return `pb-${endpointId}`
+}
+
+const pickConnectedStatus = (statuses: NodeCanvasConnectionsLookupStatus[]) => {
+  const connected = statuses.filter((item) => item.already_connected)
+  if (connected.length === 0) return null
+  return connected.sort((a, b) => b.component_handles.length - a.component_handles.length)[0]
+}
+
+const isNodeInRevealedChain = (node: GraphNode) => {
+  return node.ports.some((port) => revealedChainHandleSet.value.has(port.id))
+}
+
+const isPortInRevealedChain = (portId: string) => {
+  return revealedChainHandleSet.value.has(portId)
+}
+
+const isCableInRevealedChain = (cable: CableConnection) => {
+  return isPortInRevealedChain(cable.fromPortId) && isPortInRevealedChain(cable.toPortId)
+}
+
+const clearRevealedChain = () => {
+  revealedChainHandles.value = []
+  revealedChainEdgeIds.value = []
 }
 
 const buildDefaultNodesFromDevices = (): GraphNode[] => {
@@ -361,6 +469,157 @@ const scheduleStateSave = () => {
 
 const saveStateNow = async () => {
   await persistence.saveNow(buildSnapshotState())
+}
+
+const lookupExistingComponentForNode = async (node: GraphNode) => {
+  const handles = node.ports.map((port) => port.id).filter(isLookupHandle)
+  if (handles.length === 0) return
+
+  try {
+    const response = await api.lookupNodeCanvasConnections({ handles })
+    const connected = pickConnectedStatus(response.statuses)
+    if (!connected) return
+
+    existingComponentByNodeId.value = {
+      ...existingComponentByNodeId.value,
+      [node.id]: {
+        componentHandles: connected.component_handles,
+        componentEdgeIds: connected.component_edge_ids,
+        componentEdges: connected.component_edges ?? [],
+      },
+    }
+    connectedNoticeNodeId.value = node.id
+  } catch {
+    // Non-fatal: this is informational UX only.
+  }
+}
+
+const revealExistingChainForNode = (nodeId: string) => {
+  const component = existingComponentByNodeId.value[nodeId]
+  if (!component) return
+  const existingHandleSet = new Set(nodes.value.flatMap((node) => node.ports.map((port) => port.id)))
+  const missingTemplates = new Map<string, NodeTemplate>()
+  for (const handle of component.componentHandles) {
+    if (existingHandleSet.has(handle)) continue
+    const template = handle.startsWith('dev-')
+      ? findDeviceTemplateByHandle(handle)
+      : findPatchbayTemplateByHandle(handle)
+    if (!template) continue
+    missingTemplates.set(template.templateId, template)
+  }
+
+  if (missingTemplates.size > 0) {
+    const center = getViewportCenterWorld()
+    const maxX = WORLD_WIDTH - NODE_WIDTH - BOARD_PADDING
+    const maxY = WORLD_HEIGHT - NODE_HEIGHT - BOARD_PADDING
+    let idx = 0
+    for (const template of missingTemplates.values()) {
+      const offsetCol = idx % 3
+      const offsetRow = Math.floor(idx / 3)
+      const x = snapToGrid(clamp(center.x - NODE_WIDTH * 0.5 + offsetCol * (NODE_WIDTH + 36), BOARD_PADDING, maxX))
+      const y = snapToGrid(clamp(center.y - NODE_HEIGHT * 0.5 + offsetRow * (NODE_HEIGHT + 28), BOARD_PADDING, maxY))
+      nodes.value.push({
+        id: `${template.kind}-${Date.now()}-${Math.floor(Math.random() * 1000)}-${idx}`,
+        title: template.title,
+        subtitle: template.subtitle,
+        kind: template.kind,
+        details: [...template.details],
+        ports: template.ports.map((port) => ({ ...port })),
+        x,
+        y,
+      })
+      idx += 1
+    }
+  }
+
+  const portOwnerNodeIdByHandle = new Map<string, string>()
+  for (const node of nodes.value) {
+    for (const port of node.ports) {
+      if (!portOwnerNodeIdByHandle.has(port.id)) {
+        portOwnerNodeIdByHandle.set(port.id, node.id)
+      }
+    }
+  }
+
+  for (const edge of component.componentEdges) {
+    const sourceHandle = edge.sourceHandle ?? handleFromEndpoint(edge.a_type, edge.a_id)
+    const targetHandle = edge.targetHandle ?? handleFromEndpoint(edge.b_type, edge.b_id)
+    const fromNodeId = portOwnerNodeIdByHandle.get(sourceHandle)
+    const toNodeId = portOwnerNodeIdByHandle.get(targetHandle)
+    if (!fromNodeId || !toNodeId) continue
+
+    const alreadyPresent = cables.value.some((cable) => {
+      const sameDirection = cable.fromNodeId === fromNodeId && cable.fromPortId === sourceHandle && cable.toNodeId === toNodeId && cable.toPortId === targetHandle
+      const reverseDirection = cable.fromNodeId === toNodeId && cable.fromPortId === targetHandle && cable.toNodeId === fromNodeId && cable.toPortId === sourceHandle
+      return sameDirection || reverseDirection
+    })
+    if (alreadyPresent) continue
+
+    cables.value.push({
+      id: `chain-edge-${edge.id}`,
+      fromNodeId,
+      fromPortId: sourceHandle,
+      toNodeId,
+      toPortId: targetHandle,
+    })
+  }
+
+  revealedChainHandles.value = [...component.componentHandles]
+  revealedChainEdgeIds.value = [...component.componentEdgeIds]
+
+  const nextExistingByNodeId = { ...existingComponentByNodeId.value }
+  delete nextExistingByNodeId[nodeId]
+  existingComponentByNodeId.value = nextExistingByNodeId
+  if (connectedNoticeNodeId.value === nodeId) {
+    connectedNoticeNodeId.value = null
+  }
+}
+
+const applyCanvasToWiring = async () => {
+  if (persistence.readOnly.value || isApplyingConnections.value) return
+
+  isApplyingConnections.value = true
+  applyErrorMessage.value = null
+  applyStatusMessage.value = null
+  applyUndoPayload.value = null
+  try {
+    await saveStateNow()
+    const result = await api.applyNodeCanvasConnections({ use_saved_state: true })
+    const created = result.report.created_connection_ids.length
+    const deleted = result.report.deleted_connection_ids.length
+    const skipped = result.report.skipped_edges.length
+    const conflicts = result.report.conflicts.length
+    applyStatusMessage.value = `Applied: ${created} created, ${deleted} deleted, ${skipped} skipped, ${conflicts} conflicts`
+    if (result.undo && (result.undo.created_connection_ids.length > 0 || result.undo.deleted_connection_ids.length > 0)) {
+      applyUndoPayload.value = {
+        created_connection_ids: [...result.undo.created_connection_ids],
+        deleted_connection_ids: [...result.undo.deleted_connection_ids],
+      }
+    }
+  } catch (error: unknown) {
+    const candidate = error as { message?: unknown }
+    applyErrorMessage.value = typeof candidate?.message === 'string' ? candidate.message : 'Apply failed'
+  } finally {
+    isApplyingConnections.value = false
+  }
+}
+
+const undoLastApply = async () => {
+  if (!applyUndoPayload.value || isApplyingConnections.value) return
+
+  isApplyingConnections.value = true
+  applyErrorMessage.value = null
+  try {
+    const result = await api.undoNodeCanvasConnections(applyUndoPayload.value)
+    applyStatusMessage.value = `Undo applied: ${result.report.reverted_created} reverted, ${result.report.restored_deleted} restored, ${result.report.skipped_restores} skipped`
+    applyUndoPayload.value = null
+    connectedNoticeNodeId.value = null
+  } catch (error: unknown) {
+    const candidate = error as { message?: unknown }
+    applyErrorMessage.value = typeof candidate?.message === 'string' ? candidate.message : 'Undo failed'
+  } finally {
+    isApplyingConnections.value = false
+  }
 }
 
 const boardToWorld = (clientX: number, clientY: number) => {
@@ -629,6 +888,16 @@ const addCable = (fromNodeId: string, fromPortId: string, toNodeId: string, toPo
   })
 }
 
+const hasKnownExternalConnectionForPort = (nodeId: string, portId: string) => {
+  const component = existingComponentByNodeId.value[nodeId]
+  if (!component) return false
+  return component.componentHandles.includes(portId)
+}
+
+const isTargetPortOccupied = (nodeId: string, portId: string) => {
+  return getPortConnections(nodeId, portId).length > 0 || hasKnownExternalConnectionForPort(nodeId, portId)
+}
+
 const connectDraftToTargetPort = (targetPortId: string) => {
   if (!cableDraft.value || !activeConnectTargetNode.value) return
 
@@ -650,6 +919,10 @@ const connectDraftToTargetPort = (targetPortId: string) => {
     return
   }
 
+  if (isTargetPortOccupied(targetNodeId, targetPortId)) {
+    connectConflictMessage.value = 'Connection conflict detected: this destination port is already in use. Saving will overwrite the existing route for that slot.'
+  }
+
   addCable(sourceNodeId, sourcePortId, targetNodeId, targetPortId)
 
   cancelCableDraft()
@@ -659,6 +932,12 @@ const connectDraftToTargetPort = (targetPortId: string) => {
 const resetCanvas = () => {
   nodes.value = buildDefaultNodesFromDevices()
   cables.value = []
+  existingComponentByNodeId.value = {}
+  connectedNoticeNodeId.value = null
+  clearRevealedChain()
+  applyStatusMessage.value = null
+  applyErrorMessage.value = null
+  applyUndoPayload.value = null
 
   selectedNodeId.value = null
   pinnedTooltipNodeId.value = null
@@ -678,9 +957,19 @@ const resetCanvas = () => {
 const deleteSelectedNode = () => {
   if (!selectedNodeId.value) return
   const nodeId = selectedNodeId.value
+  const deletedNode = nodeMap.value.get(nodeId)
 
   nodes.value = nodes.value.filter((node) => node.id !== nodeId)
   cables.value = cables.value.filter((cable) => cable.fromNodeId !== nodeId && cable.toNodeId !== nodeId)
+  const nextExistingByNodeId = { ...existingComponentByNodeId.value }
+  delete nextExistingByNodeId[nodeId]
+  existingComponentByNodeId.value = nextExistingByNodeId
+  if (deletedNode && isNodeInRevealedChain(deletedNode)) {
+    clearRevealedChain()
+  }
+  if (connectedNoticeNodeId.value === nodeId) {
+    connectedNoticeNodeId.value = null
+  }
   dragging.value = null
 
   if (hoveredNodeId.value === nodeId || hoverPreviewNodeId.value === nodeId || pinnedTooltipNodeId.value === nodeId) {
@@ -713,6 +1002,7 @@ const openAddModal = () => {
   showAddModal.value = true
   catalogTab.value = 'devices'
   addSearchQuery.value = ''
+  connectedNoticeNodeId.value = null
 }
 
 const closeAddModal = () => {
@@ -731,7 +1021,7 @@ const getViewportCenterWorld = () => {
   }
 }
 
-const addNodeFromTemplate = (item: NodeTemplate) => {
+const addNodeFromTemplate = async (item: NodeTemplate) => {
   const center = getViewportCenterWorld()
   const maxX = WORLD_WIDTH - NODE_WIDTH - BOARD_PADDING
   const maxY = WORLD_HEIGHT - NODE_HEIGHT - BOARD_PADDING
@@ -739,8 +1029,7 @@ const addNodeFromTemplate = (item: NodeTemplate) => {
   const x = snapToGrid(clamp(center.x - NODE_WIDTH * 0.5, BOARD_PADDING, maxX))
   const y = snapToGrid(clamp(center.y - NODE_HEIGHT * 0.5, BOARD_PADDING, maxY))
   const id = `${item.kind}-${Date.now()}-${Math.floor(Math.random() * 1000)}`
-
-  nodes.value.push({
+  const createdNode: GraphNode = {
     id,
     title: item.title,
     subtitle: item.subtitle,
@@ -749,11 +1038,14 @@ const addNodeFromTemplate = (item: NodeTemplate) => {
     ports: item.ports.map((port) => ({ ...port })),
     x,
     y,
-  })
+  }
+
+  nodes.value.push(createdNode)
 
   selectedNodeId.value = id
   closeAddModal()
   scheduleStateSave()
+  await lookupExistingComponentForNode(createdNode)
 }
 
 const hydrateCanvas = async () => {
@@ -776,6 +1068,12 @@ const hydrateCanvas = async () => {
         await saveStateNow()
       }
     }
+    existingComponentByNodeId.value = {}
+    connectedNoticeNodeId.value = null
+    clearRevealedChain()
+    applyStatusMessage.value = null
+    applyErrorMessage.value = null
+    applyUndoPayload.value = null
   } finally {
     persistence.setHydrating(false)
   }
@@ -879,17 +1177,42 @@ onBeforeUnmount(() => {
           <button class="ghost-btn" @click="zoomIn">+</button>
           <button class="ghost-btn" @click="resetView">Reset view</button>
         </div>
+        <button class="ghost-btn apply-btn" :disabled="persistence.readOnly.value || isApplyingConnections" @click="applyCanvasToWiring">
+          {{ isApplyingConnections ? 'Applying...' : 'Apply to wiring' }}
+        </button>
         <button class="ghost-btn add-btn" @click="openAddModal">+ Add node</button>
         <button class="ghost-btn danger-btn" :disabled="!hasSelectedNode" @click="deleteSelectedNode">
           Delete selected
         </button>
-        <button class="ghost-btn" @click="resetCanvas">Reset canvas</button>
       </div>
     </header>
 
     <div v-if="cableDraft && draftSourceLabel" class="connect-banner">
       <span>Connecting from {{ draftSourceLabel }}. Click a destination node.</span>
       <button class="ghost-btn" @click="cancelCableDraft">Cancel</button>
+    </div>
+
+    <div v-if="connectConflictMessage" class="chain-banner warning">
+      <span>{{ connectConflictMessage }}</span>
+      <div class="chain-banner-actions">
+        <button class="ghost-btn" @click="connectConflictMessage = null">Dismiss</button>
+      </div>
+    </div>
+
+    <div v-if="connectedNotice" class="chain-banner">
+      <span>{{ connectedNotice.nodeTitle }} is already connected ({{ connectedNotice.count }} handles in chain).</span>
+      <div class="chain-banner-actions">
+        <button class="ghost-btn" @click="revealExistingChainForNode(connectedNotice.nodeId)">Reveal chain</button>
+        <button class="ghost-btn" @click="connectedNoticeNodeId = null">Dismiss</button>
+      </div>
+    </div>
+
+    <div v-if="applyStatusMessage || applyErrorMessage" class="apply-banner" :class="{ error: !!applyErrorMessage }">
+      <span>{{ applyErrorMessage ?? applyStatusMessage }}</span>
+      <button v-if="applyUndoPayload && !applyErrorMessage" class="ghost-btn" :disabled="isApplyingConnections" @click="undoLastApply">
+        Undo
+      </button>
+      <button v-if="hasRevealedChain" class="ghost-btn" @click="clearRevealedChain">Clear highlight</button>
     </div>
 
     <div
@@ -904,7 +1227,7 @@ onBeforeUnmount(() => {
           <g v-for="item in cableGeometry" :key="item.id">
             <path
               class="cable-path"
-              :class="{ hovered: hoveredCableId === item.id }"
+              :class="{ hovered: hoveredCableId === item.id, 'chain-highlight': isCableInRevealedChain(item.cable) }"
               :d="item.path"
               @pointerenter="onCablePointerEnter(item.id)"
               @pointerleave="onCablePointerLeave"
@@ -920,7 +1243,12 @@ onBeforeUnmount(() => {
           class="node-card"
           :class="[
             getNodeClass(node.kind),
-            { dragging: dragging?.nodeId === node.id, selected: selectedNodeId === node.id },
+            {
+              dragging: dragging?.nodeId === node.id,
+              selected: selectedNodeId === node.id,
+              'already-connected': !!existingComponentByNodeId[node.id],
+              'chain-highlight': isNodeInRevealedChain(node),
+            },
           ]"
           :style="{ left: `${node.x}px`, top: `${node.y}px` }"
           @pointerenter="startHoverTracking(node.id)"
@@ -932,6 +1260,7 @@ onBeforeUnmount(() => {
             <span class="node-id">{{ node.id }}</span>
           </header>
           <h3>{{ node.title }}</h3>
+          <p v-if="existingComponentByNodeId[node.id]" class="connection-pill">Already connected</p>
         </article>
 
         <aside
@@ -964,13 +1293,24 @@ onBeforeUnmount(() => {
               v-for="port in activeTooltipNode.ports"
               :key="port.id"
               class="port-row"
-              :class="{ connected: getPortConnections(activeTooltipNode.id, port.id).length > 0 }"
+              :class="{
+                connected: getPortConnections(activeTooltipNode.id, port.id).length > 0,
+                'chain-highlight': isPortInRevealedChain(port.id),
+              }"
               @click.stop="beginCableFromPort(activeTooltipNode.id, port.id)"
             >
               <span class="port-name">{{ port.name }}</span>
               <span class="port-state">{{ getPortConnectionLabel(activeTooltipNode.id, port.id) }}</span>
             </button>
           </div>
+
+          <button
+            v-if="activeTooltipNodeComponent"
+            class="ghost-btn reveal-chain-btn"
+            @click.stop="revealExistingChainForNode(activeTooltipNode.id)"
+          >
+            Reveal existing chain ({{ activeTooltipNodeComponent.componentHandles.length }})
+          </button>
 
           <div v-if="!isTooltipPinned" class="pin-progress" aria-hidden="true">
             <div class="pin-progress-fill" :style="tooltipProgressStyle"></div>
@@ -1016,7 +1356,7 @@ onBeforeUnmount(() => {
             v-for="item in filteredCatalog"
             :key="item.templateId"
             class="catalog-item"
-            @click="addNodeFromTemplate(item)"
+            @click="void addNodeFromTemplate(item)"
           >
             <span class="catalog-item-title">{{ item.title }}</span>
             <span class="catalog-item-subtitle">{{ item.subtitle }}</span>
@@ -1033,16 +1373,20 @@ onBeforeUnmount(() => {
           <button class="tooltip-close" @click="closeConnectModal">x</button>
         </header>
 
-        <p class="connect-help">Select destination port. Existing connections are preserved.</p>
+        <p class="connect-help">Select destination port. Ports already in use are marked as conflict candidates.</p>
         <div class="catalog-list">
           <button
             v-for="port in activeConnectTargetNode.ports"
             :key="port.id"
             class="catalog-item"
+            :class="{ occupied: isTargetPortOccupied(activeConnectTargetNode.id, port.id) }"
             @click="connectDraftToTargetPort(port.id)"
           >
             <span class="catalog-item-title">{{ port.name }}</span>
             <span class="catalog-item-subtitle">{{ getPortConnectionLabel(activeConnectTargetNode.id, port.id) }}</span>
+            <span v-if="isTargetPortOccupied(activeConnectTargetNode.id, port.id)" class="connect-conflict-chip">
+              Conflict candidate
+            </span>
           </button>
         </div>
       </div>
@@ -1149,6 +1493,11 @@ onBeforeUnmount(() => {
   color: #bfe0be;
 }
 
+.apply-btn {
+  border-color: rgba(115, 168, 212, 0.7);
+  color: #c8def3;
+}
+
 .danger-btn {
   border-color: rgba(176, 75, 61, 0.7);
   color: #e9b2a8;
@@ -1168,6 +1517,43 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(212, 154, 79, 0.5);
   border-radius: var(--radius-2);
   background: rgba(212, 154, 79, 0.14);
+}
+
+.chain-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid rgba(106, 163, 111, 0.5);
+  border-radius: var(--radius-2);
+  background: rgba(106, 163, 111, 0.14);
+}
+
+.chain-banner.warning {
+  border-color: rgba(176, 75, 61, 0.45);
+  background: rgba(176, 75, 61, 0.14);
+}
+
+.chain-banner-actions {
+  display: inline-flex;
+  gap: var(--space-2);
+}
+
+.apply-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid rgba(115, 168, 212, 0.5);
+  border-radius: var(--radius-2);
+  background: rgba(115, 168, 212, 0.14);
+}
+
+.apply-banner.error {
+  border-color: rgba(176, 75, 61, 0.5);
+  background: rgba(176, 75, 61, 0.14);
 }
 
 .board {
@@ -1222,6 +1608,11 @@ onBeforeUnmount(() => {
   stroke-width: 3;
 }
 
+.cable-path.chain-highlight {
+  stroke: #8bd0a0;
+  stroke-width: 3;
+}
+
 .cable-path.draft {
   stroke-dasharray: 7 5;
   opacity: 0.95;
@@ -1265,6 +1656,14 @@ onBeforeUnmount(() => {
   border-left: 4px solid #73a8d4;
 }
 
+.node-card.already-connected {
+  box-shadow: 0 0 0 1px rgba(115, 168, 212, 0.45), var(--shadow-1);
+}
+
+.node-card.chain-highlight {
+  box-shadow: 0 0 0 2px rgba(106, 163, 111, 0.65), var(--shadow-1);
+}
+
 .node-card-header {
   display: flex;
   align-items: baseline;
@@ -1289,6 +1688,18 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 1rem;
   line-height: 1.2;
+}
+
+.connection-pill {
+  margin: 8px 0 0;
+  display: inline-flex;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(115, 168, 212, 0.5);
+  color: #c8def3;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
 }
 
 .node-tooltip {
@@ -1368,6 +1779,10 @@ onBeforeUnmount(() => {
   border-color: rgba(106, 163, 111, 0.8);
 }
 
+.port-row.chain-highlight {
+  box-shadow: inset 0 0 0 1px rgba(106, 163, 111, 0.6);
+}
+
 .port-name {
   font-size: 0.85rem;
   font-weight: 600;
@@ -1395,6 +1810,11 @@ onBeforeUnmount(() => {
   margin: 6px 0 0;
   font-size: 0.72rem;
   color: var(--text-muted);
+}
+
+.reveal-chain-btn {
+  margin-top: 8px;
+  width: 100%;
 }
 
 .cable-tooltip {
@@ -1512,6 +1932,10 @@ onBeforeUnmount(() => {
   border-color: rgba(106, 163, 111, 0.8);
 }
 
+.catalog-item.occupied {
+  border-color: rgba(176, 75, 61, 0.45);
+}
+
 .catalog-item-title {
   font-weight: 600;
 }
@@ -1519,6 +1943,18 @@ onBeforeUnmount(() => {
 .catalog-item-subtitle {
   font-size: 0.82rem;
   color: var(--text-secondary);
+}
+
+.connect-conflict-chip {
+  margin-top: 6px;
+  display: inline-flex;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 2px 8px;
+  background: rgba(176, 75, 61, 0.16);
+  color: var(--danger);
+  font-size: 0.75rem;
+  font-weight: 600;
 }
 
 .catalog-empty,

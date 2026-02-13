@@ -1,18 +1,7 @@
 // API client for patchbay backend
 import { apiBaseUrl } from './authConfig'
-import { fetchWithAuth, requestJson, requestJsonAllowErrors, requestJsonWithMeta } from './apiClient'
-import {
-  type SuggestionOptions,
-  type Intent,
-  type SuggestionsResponse,
-  type PreviewResponse,
-  type ApplyResponse,
-  type SuggestionPlan,
-  IntentParseError,
-  ConflictError,
-  type IntentParseErrorData,
-  type ConflictErrorData,
-} from '@/types/suggestions'
+import { fetchWithAuth, requestJson, requestJsonWithMeta } from './apiClient'
+import type { GraphEndpoint, GraphPayload, GraphEdge, GraphNode } from '@/types/graph'
 import type { FeatureKey, LimitKey } from './entitlementKeys'
 
 // API Types (snake_case from backend)
@@ -27,7 +16,7 @@ export interface ApiPort {
   id: string
   label: string
   type: 'Input' | 'Output' | 'Other'
-  patchbay_id: number | null
+  patchbay_id?: number | null
 }
 
 export interface ApiDevice {
@@ -44,13 +33,8 @@ export interface ApiState {
   devices: ApiDevice[]
 }
 
-export interface ApiPortLinkRequest {
-  patchbay_id: number
-}
-
-export interface ApiPortLinkResponse extends ApiPort {
-  unlinked_port_id?: string | null
-}
+type GraphNodeWire = Record<string, unknown>
+type GraphEdgeWire = Record<string, unknown>
 
 export interface NodeCanvasViewport {
   x: number
@@ -84,6 +68,67 @@ export interface NodeCanvasState {
   viewport?: NodeCanvasViewport | null
   uiFlags?: Record<string, unknown>
   updatedAt?: string
+}
+
+export interface NodeCanvasApplyConnectionsConflict {
+  edge_id: string
+  code: string
+  message: string
+}
+
+export interface NodeCanvasApplyConnectionsReport {
+  created_connection_ids: number[]
+  deleted_connection_ids: number[]
+  skipped_edges: string[]
+  conflicts: NodeCanvasApplyConnectionsConflict[]
+}
+
+export interface NodeCanvasApplyConnectionsUndo {
+  created_connection_ids: number[]
+  deleted_connection_ids: number[]
+}
+
+export interface NodeCanvasApplyConnectionsResponse {
+  result: string
+  report: NodeCanvasApplyConnectionsReport
+  undo?: NodeCanvasApplyConnectionsUndo | null
+}
+
+export interface NodeCanvasConnectionsLookupStatus {
+  handle: string
+  already_connected: boolean
+  component_edge_ids: number[]
+  component_handles: string[]
+  component_edges?: Array<{
+    id: number
+    kind: string
+    a_type: 'device_port' | 'patchbay_point'
+    a_id: string
+    b_type: 'device_port' | 'patchbay_point'
+    b_id: string
+    sourceHandle?: string | null
+    targetHandle?: string | null
+  }>
+}
+
+export interface NodeCanvasConnectionsLookupResponse {
+  statuses: NodeCanvasConnectionsLookupStatus[]
+}
+
+export interface NodeCanvasUndoConnectionsResponse {
+  result: string
+  report: {
+    reverted_created: number
+    restored_deleted: number
+    skipped_restores: number
+  }
+}
+
+export interface ApiConnectionCreate {
+  a_type: 'device_port' | 'patchbay_point'
+  a_id: string
+  b_type: 'device_port' | 'patchbay_point'
+  b_id: string
 }
 
 export interface ApiDeviceCreate {
@@ -182,6 +227,52 @@ export const api = {
     return requestJson<ApiState>('/state')
   },
 
+  async getGraph(): Promise<GraphPayload> {
+    const payload = await requestJson<{ nodes?: GraphNodeWire[]; edges?: GraphEdgeWire[] }>('/api/graph')
+    return normalizeGraphPayload(payload)
+  },
+
+  async getDeviceGraph(deviceId: number, options?: { mode?: 'direct' | 'reachable' }): Promise<GraphPayload> {
+    const params = new URLSearchParams({ device_id: String(deviceId) })
+    if (options?.mode) params.set('mode', options.mode)
+    const payload = await requestJson<{ nodes?: GraphNodeWire[]; edges?: GraphEdgeWire[] }>(`/api/graph?${params.toString()}`)
+    return normalizeGraphPayload(payload)
+  },
+
+  async getPatchbayGraph(patchbayId: number, options?: { mode?: 'direct' | 'reachable' }): Promise<GraphPayload> {
+    const params = new URLSearchParams({ patchbay_id: String(patchbayId) })
+    if (options?.mode) params.set('mode', options.mode)
+    const payload = await requestJson<{ nodes?: GraphNodeWire[]; edges?: GraphEdgeWire[] }>(`/api/graph?${params.toString()}`)
+    return normalizeGraphPayload(payload)
+  },
+
+  async listConnections(): Promise<GraphEdge[]> {
+    const payload = await requestJson<GraphEdgeWire[]>('/api/connections')
+    return payload.map((item) => normalizeGraphEdge(item))
+  },
+
+  async createConnection(payload: { a: GraphEndpoint; b: GraphEndpoint } | ApiConnectionCreate): Promise<GraphEdge> {
+    const body = 'a' in payload
+      ? {
+          a_type: payload.a.type,
+          a_id: String(payload.a.id),
+          b_type: payload.b.type,
+          b_id: String(payload.b.id),
+        }
+      : payload
+    const result = await requestJson<GraphEdgeWire>('/api/connections', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    })
+    return normalizeGraphEdge(result)
+  },
+
+  async deleteConnection(connectionId: string): Promise<void> {
+    await requestJson<unknown>(`/api/connections/${connectionId}`, {
+      method: 'DELETE',
+    })
+  },
+
   async getNodeCanvas(): Promise<{ data: NodeCanvasState | null }> {
     return requestJson<{ data: NodeCanvasState | null }>('/api/node-canvas')
   },
@@ -189,6 +280,27 @@ export const api = {
   async putNodeCanvas(payload: NodeCanvasState): Promise<{ data: NodeCanvasState }> {
     return requestJson<{ data: NodeCanvasState }>('/api/node-canvas', {
       method: 'PUT',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async applyNodeCanvasConnections(payload: { state?: NodeCanvasState; use_saved_state?: boolean } = {}): Promise<NodeCanvasApplyConnectionsResponse> {
+    return requestJson<NodeCanvasApplyConnectionsResponse>('/api/node-canvas/connections/apply', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async undoNodeCanvasConnections(payload: { created_connection_ids: number[]; deleted_connection_ids: number[] }): Promise<NodeCanvasUndoConnectionsResponse> {
+    return requestJson<NodeCanvasUndoConnectionsResponse>('/api/node-canvas/connections/undo', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async lookupNodeCanvasConnections(payload: { handles: string[] }): Promise<NodeCanvasConnectionsLookupResponse> {
+    return requestJson<NodeCanvasConnectionsLookupResponse>('/api/node-canvas/connections/lookup', {
+      method: 'POST',
       body: JSON.stringify(payload),
     })
   },
@@ -210,26 +322,6 @@ export const api = {
     return requestJson<ApiDevice>(`/devices/${deviceId}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
-    })
-  },
-
-  async linkPort(portId: string, patchbayId: number): Promise<ApiPortLinkResponse> {
-    return requestJson<ApiPortLinkResponse>(`/ports/${portId}/link`, {
-      method: 'POST',
-      body: JSON.stringify({ patchbay_id: patchbayId }),
-    })
-  },
-
-  async updatePortPatchbay(portId: string, patchbayId: number | null): Promise<ApiPort> {
-    return requestJson<ApiPort>(`/ports/${portId}/patchbay`, {
-      method: 'PUT',
-      body: JSON.stringify({ patchbay_id: patchbayId }),
-    })
-  },
-
-  async unlinkPort(portId: string): Promise<ApiPort> {
-    return requestJson<ApiPort>(`/ports/${portId}/unlink`, {
-      method: 'POST',
     })
   },
 
@@ -399,84 +491,6 @@ export const api = {
     }
   },
 
-  async suggestionsPresets(presetId: string, options?: SuggestionOptions): Promise<SuggestionsResponse> {
-    return requestJson<SuggestionsResponse>('/suggestions/presets', {
-      method: 'POST',
-      body: JSON.stringify({
-        preset_id: presetId,
-        options: options ?? undefined,
-      }),
-    })
-  },
-
-  async aiIntent(text: string): Promise<Intent> {
-    const result = await requestJsonAllowErrors<Intent>('/ai/intent', {
-      method: 'POST',
-      body: JSON.stringify({ text }),
-    }, [422])
-
-    if (result.status === 422) {
-      const details = (result.errorJson || { detail: result.errorText }) as IntentParseErrorData
-      throw new IntentParseError('INTENT_PARSE_FAILED', details)
-    }
-
-    return result.data as Intent
-  },
-
-  async suggestionsFromIntent(intent: Intent, options?: SuggestionOptions): Promise<SuggestionsResponse> {
-    return requestJson<SuggestionsResponse>('/suggestions/from-intent', {
-      method: 'POST',
-      body: JSON.stringify({
-        intent,
-        options: options ?? undefined,
-      }),
-    })
-  },
-
-  async suggestionsPreview(plan: SuggestionPlan, options?: SuggestionOptions): Promise<PreviewResponse> {
-    const result = await requestJsonAllowErrors<PreviewResponse>('/suggestions/preview', {
-      method: 'POST',
-      body: JSON.stringify({
-        plan,
-        options: options ?? undefined,
-      }),
-    }, [409])
-
-    if (result.status === 409) {
-      const details = (result.errorJson || { detail: result.errorText }) as ConflictErrorData
-      throw new ConflictError('SUGGESTION_CONFLICT', details)
-    }
-
-    return result.data as PreviewResponse
-  },
-
-  async suggestionsApply(
-    plan: SuggestionPlan,
-    options?: SuggestionOptions,
-    intentOrSignature?: Intent | { intent_signature: string }
-  ): Promise<ApplyResponse> {
-    const payload: Record<string, unknown> = { plan }
-    if (options) payload.options = options
-    if (intentOrSignature) {
-      if ('intent_signature' in intentOrSignature) {
-        payload.intent_signature = intentOrSignature.intent_signature
-      } else {
-        payload.intent = intentOrSignature
-      }
-    }
-
-    const result = await requestJsonAllowErrors<ApplyResponse>('/suggestions/apply', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }, [409])
-
-    if (result.status === 409) {
-      const details = (result.errorJson || { detail: result.errorText }) as ConflictErrorData
-      throw new ConflictError('SUGGESTION_CONFLICT', details)
-    }
-
-    return result.data as ApplyResponse
-  },
 }
 
 interface AIDeviceExtraction {
@@ -489,6 +503,68 @@ interface AIDeviceExtraction {
     label: string
     direction?: string | null
   }>
+}
+
+function normalizeGraphPayload(payload: { nodes?: GraphNodeWire[]; edges?: GraphEdgeWire[] }): GraphPayload {
+  return {
+    nodes: (payload.nodes || []).map((node) => normalizeGraphNode(node)),
+    edges: (payload.edges || []).map((edge) => normalizeGraphEdge(edge)),
+  }
+}
+
+function normalizeGraphNode(raw: GraphNodeWire): GraphNode {
+  const kind = String(raw.node_type || raw.kind || raw.type || 'port') as 'device' | 'port' | 'patchbay_point'
+  const data = (raw.data && typeof raw.data === 'object') ? (raw.data as Record<string, unknown>) : null
+  const endpointObj = (raw.endpoint && typeof raw.endpoint === 'object') ? (raw.endpoint as Record<string, unknown>) : null
+  const endpointTypeRaw = raw.endpoint_type || raw.endpointType || raw.type
+    || endpointObj?.type
+  let endpointType: GraphEndpoint['type'] | undefined
+  if (endpointTypeRaw === 'device_port' || endpointTypeRaw === 'patchbay_point') {
+    endpointType = endpointTypeRaw
+  } else if (kind === 'port') {
+    endpointType = 'device_port'
+  } else if (kind === 'patchbay_point') {
+    endpointType = 'patchbay_point'
+  }
+
+  const endpointId = raw.endpoint_id || raw.endpointId || raw.port_id || raw.portId || raw.patchbay_id || raw.patchbayId
+    || endpointObj?.id
+    || data?.id
+  const id = String(raw.id || data?.id || `${kind}:${String(endpointId || raw.device_id || raw.deviceId || data?.device_id || data?.deviceId || Math.random())}`)
+  const label = String(raw.label || raw.name || data?.label || data?.name || id)
+  const deviceIdRaw = raw.device_id || raw.deviceId || data?.device_id || data?.deviceId
+  const deviceId = typeof deviceIdRaw === 'number' ? deviceIdRaw : (typeof deviceIdRaw === 'string' ? Number(deviceIdRaw) : undefined)
+
+  return {
+    id,
+    kind,
+    label,
+    description: typeof raw.description === 'string' ? raw.description : (typeof data?.description === 'string' ? data.description : undefined),
+    endpoint: endpointType && (typeof endpointId === 'string' || typeof endpointId === 'number')
+      ? { type: endpointType, id: endpointId }
+      : undefined,
+    deviceId: Number.isFinite(deviceId as number) ? deviceId : undefined,
+    metadata: raw,
+  }
+}
+
+function normalizeGraphEdge(raw: GraphEdgeWire): GraphEdge {
+  const sourceObj = (raw.source && typeof raw.source === 'object') ? (raw.source as Record<string, unknown>) : null
+  const targetObj = (raw.target && typeof raw.target === 'object') ? (raw.target as Record<string, unknown>) : null
+  const aType = (raw.a_type || raw.from_type || raw.endpoint_a_type || raw.source_type || sourceObj?.type || 'device_port') as GraphEndpoint['type']
+  const bType = (raw.b_type || raw.to_type || raw.endpoint_b_type || raw.target_type || targetObj?.type || 'device_port') as GraphEndpoint['type']
+  const aId = raw.a_id || raw.from_id || raw.endpoint_a_id || raw.source_id || sourceObj?.id
+  const bId = raw.b_id || raw.to_id || raw.endpoint_b_id || raw.target_id || targetObj?.id
+
+  return {
+    id: String(raw.id || raw.connection_id || `${aType}:${String(aId)}-${bType}:${String(bId)}`),
+    kind: String(raw.kind || 'connection'),
+    a: { type: aType, id: (aId as string | number) ?? '' },
+    b: { type: bType, id: (bId as string | number) ?? '' },
+    createdAt: typeof raw.created_at === 'string' ? raw.created_at : (typeof raw.createdAt === 'string' ? raw.createdAt : undefined),
+    createdBy: typeof raw.created_by === 'string' ? raw.created_by : (typeof raw.createdBy === 'string' ? raw.createdBy : undefined),
+    metadata: raw,
+  }
 }
 
 function buildDeviceFromExtraction(extraction: AIDeviceExtraction): ApiDevice {

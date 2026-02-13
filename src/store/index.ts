@@ -2,6 +2,7 @@ import { reactive } from 'vue'
 import { api, type ApiPort, type ApiDevice, type ApiPatchbayPoint } from '@/lib/api'
 import { deviceImageCache } from '@/lib/deviceImageCache'
 import { strings } from '@/ui/strings'
+import type { GraphEdge } from '@/types/graph'
 
 // Types
 export interface PatchBayNode {
@@ -45,13 +46,36 @@ export interface Toast {
   message: string;
 }
 
+interface DevicePatchbayLink {
+  connectionId: string
+  portId: string
+  patchbayId: number
+}
+
+function toDevicePatchbayLink(edge: GraphEdge): DevicePatchbayLink | null {
+  const a = edge.a
+  const b = edge.b
+
+  if (a.type === 'device_port' && b.type === 'patchbay_point') {
+    const patchbayId = Number(b.id)
+    if (!Number.isFinite(patchbayId)) return null
+    return { connectionId: String(edge.id), portId: String(a.id), patchbayId }
+  }
+  if (a.type === 'patchbay_point' && b.type === 'device_port') {
+    const patchbayId = Number(a.id)
+    if (!Number.isFinite(patchbayId)) return null
+    return { connectionId: String(edge.id), portId: String(b.id), patchbayId }
+  }
+  return null
+}
+
 // Convert API types (snake_case) to frontend types (camelCase)
 function apiPortToDevicePort(apiPort: ApiPort): DevicePort {
   return {
     id: apiPort.id,
     label: apiPort.label,
     type: apiPort.type,
-    patchbayId: apiPort.patchbay_id,
+    patchbayId: apiPort.patchbay_id ?? null,
   }
 }
 
@@ -87,10 +111,12 @@ export const store = reactive({
   backendAuthDegraded: false,
   loadPromise: null as Promise<void> | null,
   activeTab: 'devices', // 'patchbay' | 'devices' | 'connections'
+  focusDeviceId: null as number | null,
   selectionMode: false,
   pendingLink: null as PendingLink | null, // The port waiting to be linked (from Device -> Patchbay flow)
   linkFlow: null as LinkFlow | null,
   lastLinkReturnPayload: null as LinkFlow['returnPayload'] | null,
+  connections: [] as GraphEdge[],
   highlightedPatchIds: [] as number[], // For connection finder highlighting
   patchbayFocusId: null as number | null,
   connectionFinderState: {
@@ -121,6 +147,8 @@ export const store = reactive({
         const state = await api.getState()
         this.patchbayNodes = state.patchbay_points.map(apiPatchbayToNode)
         this.devices = state.devices.map(apiDeviceToDevice)
+        await this.refreshConnections()
+        this.projectPatchbayLinksFromConnections()
         this.hasLoadedInitialData = true
         this.authError = false // Clear auth error on success
         this.backendAuthDegraded = false
@@ -218,6 +246,84 @@ export const store = reactive({
     }
     return false
   },
+
+  async refreshConnections() {
+    this.connections = await api.listConnections()
+  },
+
+  async syncConnectionsProjectionSafe() {
+    try {
+      await this.refreshConnections()
+      this.projectPatchbayLinksFromConnections()
+    } catch (err) {
+      console.warn('[Store] Failed to sync connection projection', err)
+    }
+  },
+
+  projectPatchbayLinksFromConnections() {
+    for (const device of this.devices) {
+      for (const port of device.ports) {
+        port.patchbayId = null
+      }
+    }
+
+    for (const edge of this.connections) {
+      const link = toDevicePatchbayLink(edge)
+      if (!link) continue
+      for (const device of this.devices) {
+        const port = device.ports.find((item) => item.id === link.portId)
+        if (!port) continue
+        port.patchbayId = link.patchbayId
+        break
+      }
+    }
+  },
+
+  findPatchbayLinkByPortId(portId: string): DevicePatchbayLink | null {
+    for (const edge of this.connections) {
+      const link = toDevicePatchbayLink(edge)
+      if (link?.portId === portId) return link
+    }
+    return null
+  },
+
+  findPatchbayLinkByPatchbayId(patchbayId: number): DevicePatchbayLink | null {
+    for (const edge of this.connections) {
+      const link = toDevicePatchbayLink(edge)
+      if (link?.patchbayId === patchbayId) return link
+    }
+    return null
+  },
+
+  async replacePatchbayLink(portId: string, patchbayId: number): Promise<void> {
+    const existingForPort = this.findPatchbayLinkByPortId(portId)
+    const existingForPatchbay = this.findPatchbayLinkByPatchbayId(patchbayId)
+
+    if (
+      existingForPort &&
+      existingForPatchbay &&
+      existingForPort.connectionId === existingForPatchbay.connectionId &&
+      existingForPort.portId === portId &&
+      existingForPort.patchbayId === patchbayId
+    ) {
+      return
+    }
+
+    const idsToDelete = new Set<string>()
+    if (existingForPort) idsToDelete.add(existingForPort.connectionId)
+    if (existingForPatchbay) idsToDelete.add(existingForPatchbay.connectionId)
+
+    for (const connectionId of idsToDelete) {
+      await api.deleteConnection(connectionId)
+    }
+
+    await api.createConnection({
+      a_type: 'device_port',
+      a_id: portId,
+      b_type: 'patchbay_point',
+      b_id: String(patchbayId),
+    })
+  },
   
   // Reset state (llamar cuando el usuario se desloguea o cambia de org)
   resetState() {
@@ -232,10 +338,12 @@ export const store = reactive({
     this.backendAuthDegraded = false
     this.loadPromise = null
     this.activeTab = 'devices'
+    this.focusDeviceId = null
     this.selectionMode = false
     this.pendingLink = null
     this.linkFlow = null
     this.lastLinkReturnPayload = null
+    this.connections = []
     this.highlightedPatchIds = []
     this.patchbayFocusId = null
     this.connectionFinderState = {
@@ -249,6 +357,14 @@ export const store = reactive({
   // Actions
   setTab(tab: string) {
     this.activeTab = tab
+  },
+
+  requestDeviceFocus(deviceId: number) {
+    this.focusDeviceId = deviceId
+  },
+
+  clearDeviceFocus() {
+    this.focusDeviceId = null
   },
   
   // Flow: Device -> Patchbay (Select a slot for a specific port)
@@ -266,33 +382,15 @@ export const store = reactive({
     if (!this.pendingLink) return
 
     try {
-      const response = await api.linkPort(this.pendingLink.portId, patchbayId)
-      
-      // Update local state: unlink old port if any
-      if (response.unlinked_port_id) {
-        for (const device of this.devices) {
-          const oldPort = device.ports.find(p => p.id === response.unlinked_port_id)
-          if (oldPort) {
-            oldPort.patchbayId = null
-            break
-          }
-        }
-      }
-
-      // Update linked port
-      for (const device of this.devices) {
-        const port = device.ports.find(p => p.id === this.pendingLink?.portId)
-        if (port && response.patchbay_id !== null) {
-          port.patchbayId = response.patchbay_id
-          break
-        }
-      }
+      await this.refreshConnections()
+      await this.replacePatchbayLink(this.pendingLink.portId, patchbayId)
+      await this.syncConnectionsProjectionSafe()
       this.pushToast({
         type: 'success',
         message: strings.toast.linkedSuccess(
           this.pendingLink.deviceName,
           this.pendingLink.portLabel,
-          response.patchbay_id ?? 0
+          patchbayId
         ),
       })
     } catch (err: any) {
@@ -305,6 +403,7 @@ export const store = reactive({
       return
     }
     
+    this.requestDeviceFocus(this.pendingLink.deviceId)
     this.activeTab = this.linkFlow?.returnTab ?? 'devices'
     this.lastLinkReturnPayload = this.linkFlow?.returnPayload ?? null
     this.cancelLinking()
@@ -318,14 +417,15 @@ export const store = reactive({
   
   // Flow: Patchbay -> Device (Unlink or Link via Search)
   async unlinkPort(deviceId: number, portId: string) {
+    void deviceId
     try {
-      await api.unlinkPort(portId)
-      
-      const device = this.devices.find(d => d.id === deviceId)
-      if (device) {
-        const port = device.ports.find(p => p.id === portId)
-        if (port) port.patchbayId = null
+      await this.refreshConnections()
+      const existing = this.findPatchbayLinkByPortId(portId)
+      if (existing) {
+        await api.deleteConnection(existing.connectionId)
       }
+      await this.refreshConnections()
+      this.projectPatchbayLinksFromConnections()
     } catch (err: any) {
       if (this.handleApiError(err, strings.toast.unlinkFailed)) {
         console.error('Error unlinking port:', err)
@@ -338,28 +438,12 @@ export const store = reactive({
 
   // Link a specific port to a patchbay ID (used from the Patchbay search modal)
   async linkPatchbayToDevice(patchbayId: number, deviceId: number, portId: string) {
+    void deviceId
     try {
-      const response = await api.linkPort(portId, patchbayId)
-      
-      // Update local state: unlink old port if any
-      if (response.unlinked_port_id) {
-        for (const device of this.devices) {
-          const oldPort = device.ports.find(p => p.id === response.unlinked_port_id)
-          if (oldPort) {
-            oldPort.patchbayId = null
-            break
-          }
-        }
-      }
-
-      // Update linked port
-      const device = this.devices.find(d => d.id === deviceId)
-      if (device) {
-        const port = device.ports.find(p => p.id === portId)
-        if (port && response.patchbay_id !== null) {
-          port.patchbayId = response.patchbay_id
-        }
-      }
+      await this.refreshConnections()
+      await this.replacePatchbayLink(portId, patchbayId)
+      await this.refreshConnections()
+      this.projectPatchbayLinksFromConnections()
       return true
     } catch (err: any) {
       if (this.handleApiError(err, strings.toast.linkFailed)) {
@@ -386,6 +470,7 @@ export const store = reactive({
       
       const newDevice = apiDeviceToDevice(apiDevice)
       this.devices.push(newDevice)
+      await this.syncConnectionsProjectionSafe()
       return newDevice
     } catch (err: any) {
       this.handleApiError(err, strings.toast.deviceSaveFailed)
@@ -412,6 +497,7 @@ export const store = reactive({
       if (index !== -1) {
         this.devices[index] = updatedDevice
       }
+      await this.syncConnectionsProjectionSafe()
       return updatedDevice
     } catch (err: any) {
       this.handleApiError(err, strings.toast.deviceSaveFailed)
@@ -432,6 +518,7 @@ export const store = reactive({
         this.selectedDevice = null
       }
       deviceImageCache.invalidateDevice(id)
+      await this.syncConnectionsProjectionSafe()
     } catch (err: any) {
       this.handleApiError(err, strings.toast.deviceDeleteFailed)
       console.error('Error deleting device:', err)
@@ -456,6 +543,7 @@ export const store = reactive({
       }
 
       deviceImageCache.invalidateDevice(deviceId)
+      await this.syncConnectionsProjectionSafe()
       
       return updatedDevice
     } catch (err: any) {
