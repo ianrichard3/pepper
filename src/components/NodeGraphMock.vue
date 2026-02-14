@@ -13,9 +13,11 @@ import {
 import { store } from '@/store'
 
 interface DragState {
-  nodeId: string;
-  offsetX: number;
-  offsetY: number;
+  nodeIds: string[];
+  anchorNodeId: string;
+  anchorOffsetX: number;
+  anchorOffsetY: number;
+  startPositionsById: Record<string, { x: number; y: number }>;
 }
 
 interface PanState {
@@ -23,6 +25,15 @@ interface PanState {
   startClientY: number;
   startPanX: number;
   startPanY: number;
+}
+
+interface SelectionBoxState {
+  startWorldX: number;
+  startWorldY: number;
+  currentWorldX: number;
+  currentWorldY: number;
+  toggleMode: boolean;
+  baseSelectedNodeIds: string[];
 }
 
 interface NodeTemplate {
@@ -76,7 +87,9 @@ const nodes = ref<GraphNode[]>(
 const cables = ref<CableConnection[]>(INITIAL_CABLES.map((cable) => ({ ...cable })))
 const dragging = ref<DragState | null>(null)
 const panning = ref<PanState | null>(null)
-const selectedNodeId = ref<string | null>(null)
+const selectionBox = ref<SelectionBoxState | null>(null)
+const selectedNodeIds = ref<string[]>([])
+const primarySelectedNodeId = ref<string | null>(null)
 const scale = ref(DEFAULT_SCALE)
 const pan = ref({ ...DEFAULT_PAN })
 
@@ -174,9 +187,124 @@ const worldStyle = computed(() => {
 
 const zoomPercent = computed(() => `${Math.round(scale.value * 100)}%`)
 
-const hasSelectedNode = computed(() => {
-  return !!nodes.value.find((node) => node.id === selectedNodeId.value)
+const hasSelectedNodes = computed(() => selectedNodeIds.value.length > 0)
+
+const draggingNodeIdSet = computed(() => new Set(dragging.value?.nodeIds ?? []))
+
+const isNodeSelected = (nodeId: string) => selectedNodeIds.value.includes(nodeId)
+
+const selectionBoxRect = computed(() => {
+  if (!selectionBox.value) return null
+  const left = Math.min(selectionBox.value.startWorldX, selectionBox.value.currentWorldX)
+  const top = Math.min(selectionBox.value.startWorldY, selectionBox.value.currentWorldY)
+  const right = Math.max(selectionBox.value.startWorldX, selectionBox.value.currentWorldX)
+  const bottom = Math.max(selectionBox.value.startWorldY, selectionBox.value.currentWorldY)
+  return {
+    left,
+    top,
+    right,
+    bottom,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top),
+  }
 })
+
+const selectionBoxStyle = computed(() => {
+  if (!selectionBoxRect.value) return { display: 'none' }
+  return {
+    left: `${selectionBoxRect.value.left}px`,
+    top: `${selectionBoxRect.value.top}px`,
+    width: `${selectionBoxRect.value.width}px`,
+    height: `${selectionBoxRect.value.height}px`,
+  }
+})
+
+const clearSelection = () => {
+  selectedNodeIds.value = []
+  primarySelectedNodeId.value = null
+}
+
+const setSelection = (nodeIds: string[], preferredPrimaryId?: string | null) => {
+  selectedNodeIds.value = nodeIds
+  if (nodeIds.length === 0) {
+    primarySelectedNodeId.value = null
+    return
+  }
+  if (preferredPrimaryId && nodeIds.includes(preferredPrimaryId)) {
+    primarySelectedNodeId.value = preferredPrimaryId
+    return
+  }
+  if (primarySelectedNodeId.value && nodeIds.includes(primarySelectedNodeId.value)) {
+    return
+  }
+  primarySelectedNodeId.value = nodeIds[nodeIds.length - 1]
+}
+
+const selectSingleNode = (nodeId: string) => {
+  selectedNodeIds.value = [nodeId]
+  primarySelectedNodeId.value = nodeId
+}
+
+const toggleNodeSelection = (nodeId: string) => {
+  if (isNodeSelected(nodeId)) {
+    selectedNodeIds.value = selectedNodeIds.value.filter((id) => id !== nodeId)
+    if (primarySelectedNodeId.value === nodeId) {
+      primarySelectedNodeId.value = selectedNodeIds.value[selectedNodeIds.value.length - 1] ?? null
+    }
+    return
+  }
+  selectedNodeIds.value = [...selectedNodeIds.value, nodeId]
+  primarySelectedNodeId.value = nodeId
+}
+
+const isNodeDragging = (nodeId: string) => draggingNodeIdSet.value.has(nodeId)
+
+const getDragSelection = (nodeId: string) => {
+  return isNodeSelected(nodeId) ? [...selectedNodeIds.value] : [nodeId]
+}
+
+const getNodesIntersectingSelectionBox = () => {
+  if (!selectionBoxRect.value) return []
+  const { left, top, right, bottom } = selectionBoxRect.value
+  return nodes.value
+    .filter((node) => {
+      const nodeLeft = node.x
+      const nodeTop = node.y
+      const nodeRight = node.x + NODE_WIDTH
+      const nodeBottom = node.y + NODE_HEIGHT
+      return nodeRight >= left && nodeLeft <= right && nodeBottom >= top && nodeTop <= bottom
+    })
+    .map((node) => node.id)
+}
+
+const applySelectionBoxSelection = () => {
+  if (!selectionBox.value) return
+  const intersecting = getNodesIntersectingSelectionBox()
+  const intersectingSet = new Set(intersecting)
+  let nextSelection: string[]
+  if (selectionBox.value.toggleMode) {
+    const nextSet = new Set(selectionBox.value.baseSelectedNodeIds)
+    for (const nodeId of intersecting) {
+      if (nextSet.has(nodeId)) nextSet.delete(nodeId)
+      else nextSet.add(nodeId)
+    }
+    nextSelection = [...nextSet]
+  } else {
+    nextSelection = intersecting
+  }
+  const preferredPrimary = [...intersectingSet].reverse().find((id) => nextSelection.includes(id)) ?? null
+  setSelection(nextSelection, preferredPrimary)
+}
+
+const startPanGesture = (event: PointerEvent) => {
+  panning.value = {
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startPanX: pan.value.x,
+    startPanY: pan.value.y,
+  }
+  hasPannedDuringGesture.value = false
+}
 
 const activeTooltipNode = computed(() => {
   const activeId = pinnedTooltipNodeId.value ?? hoverPreviewNodeId.value
@@ -585,6 +713,7 @@ const applyCanvasToWiring = async () => {
   try {
     await saveStateNow()
     const result = await api.applyNodeCanvasConnections({ use_saved_state: true })
+    await store.syncConnectionsProjectionSafe()
     const created = result.report.created_connection_ids.length
     const deleted = result.report.deleted_connection_ids.length
     const skipped = result.report.skipped_edges.length
@@ -611,6 +740,7 @@ const undoLastApply = async () => {
   applyErrorMessage.value = null
   try {
     const result = await api.undoNodeCanvasConnections(applyUndoPayload.value)
+    await store.syncConnectionsProjectionSafe()
     applyStatusMessage.value = `Undo applied: ${result.report.reverted_created} reverted, ${result.report.restored_deleted} restored, ${result.report.skipped_restores} skipped`
     applyUndoPayload.value = null
     connectedNoticeNodeId.value = null
@@ -719,21 +849,50 @@ const onTooltipPointerLeave = () => {
 }
 
 const onNodePointerDown = (event: PointerEvent, node: GraphNode) => {
-  event.preventDefault()
-  selectedNodeId.value = node.id
+  if (event.button === 1) {
+    event.preventDefault()
+    startPanGesture(event)
+    return
+  }
+  if (event.button !== 0) return
 
+  event.preventDefault()
   if (cableDraft.value) {
+    selectSingleNode(node.id)
     if (cableDraft.value.fromNodeId === node.id) return
     connectTargetNodeId.value = node.id
     showConnectModal.value = true
     return
   }
 
+  const isToggleClick = event.ctrlKey || event.metaKey
+  if (isToggleClick) {
+    toggleNodeSelection(node.id)
+    return
+  }
+  if (!isNodeSelected(node.id)) {
+    selectSingleNode(node.id)
+  } else {
+    primarySelectedNodeId.value = node.id
+  }
+
   const pointerWorld = boardToWorld(event.clientX, event.clientY)
+  const dragNodeIds = getDragSelection(node.id)
+  const startPositionsById = Object.fromEntries(
+    dragNodeIds
+      .map((nodeId) => {
+        const candidate = nodeMap.value.get(nodeId)
+        if (!candidate) return null
+        return [nodeId, { x: candidate.x, y: candidate.y }]
+      })
+      .filter((item): item is [string, { x: number; y: number }] => item !== null),
+  )
   dragging.value = {
-    nodeId: node.id,
-    offsetX: pointerWorld.x - node.x,
-    offsetY: pointerWorld.y - node.y,
+    nodeIds: dragNodeIds,
+    anchorNodeId: node.id,
+    anchorOffsetX: pointerWorld.x - node.x,
+    anchorOffsetY: pointerWorld.y - node.y,
+    startPositionsById,
   }
   hasMovedNodeDuringDrag.value = false
 }
@@ -745,20 +904,29 @@ const onBoardPointerDown = (event: PointerEvent) => {
   if (event.button !== 0 && event.button !== 1) return
 
   event.preventDefault()
-  selectedNodeId.value = null
 
-  if (cableDraft.value) {
+  if (cableDraft.value && event.button === 0) {
     cancelCableDraft()
     return
   }
 
-  panning.value = {
-    startClientX: event.clientX,
-    startClientY: event.clientY,
-    startPanX: pan.value.x,
-    startPanY: pan.value.y,
+  if (event.button === 0) {
+    const pointerWorld = boardToWorld(event.clientX, event.clientY)
+    selectionBox.value = {
+      startWorldX: pointerWorld.x,
+      startWorldY: pointerWorld.y,
+      currentWorldX: pointerWorld.x,
+      currentWorldY: pointerWorld.y,
+      toggleMode: event.ctrlKey || event.metaKey,
+      baseSelectedNodeIds: [...selectedNodeIds.value],
+    }
+    if (!selectionBox.value.toggleMode) {
+      clearSelection()
+    }
+    return
   }
-  hasPannedDuringGesture.value = false
+
+  startPanGesture(event)
 }
 
 const onPointerMove = (event: PointerEvent) => {
@@ -769,22 +937,41 @@ const onPointerMove = (event: PointerEvent) => {
   }
 
   if (dragging.value) {
-    const dragNode = nodes.value.find((node) => node.id === dragging.value?.nodeId)
-    if (!dragNode) return
-
     const pointerWorld = boardToWorld(event.clientX, event.clientY)
-    const rawX = pointerWorld.x - dragging.value.offsetX
-    const rawY = pointerWorld.y - dragging.value.offsetY
+    const anchorStart = dragging.value.startPositionsById[dragging.value.anchorNodeId]
+    if (!anchorStart) return
+
+    const rawX = pointerWorld.x - dragging.value.anchorOffsetX
+    const rawY = pointerWorld.y - dragging.value.anchorOffsetY
     const maxX = WORLD_WIDTH - NODE_WIDTH - BOARD_PADDING
     const maxY = WORLD_HEIGHT - NODE_HEIGHT - BOARD_PADDING
 
-    const nextX = snapToGrid(clamp(rawX, BOARD_PADDING, maxX))
-    const nextY = snapToGrid(clamp(rawY, BOARD_PADDING, maxY))
-    if (dragNode.x !== nextX || dragNode.y !== nextY) {
-      hasMovedNodeDuringDrag.value = true
-      dragNode.x = nextX
-      dragNode.y = nextY
+    const anchorNextX = snapToGrid(clamp(rawX, BOARD_PADDING, maxX))
+    const anchorNextY = snapToGrid(clamp(rawY, BOARD_PADDING, maxY))
+    const deltaX = anchorNextX - anchorStart.x
+    const deltaY = anchorNextY - anchorStart.y
+
+    for (const nodeId of dragging.value.nodeIds) {
+      const dragNode = nodes.value.find((node) => node.id === nodeId)
+      const startPos = dragging.value.startPositionsById[nodeId]
+      if (!dragNode || !startPos) continue
+
+      const nextX = snapToGrid(clamp(startPos.x + deltaX, BOARD_PADDING, maxX))
+      const nextY = snapToGrid(clamp(startPos.y + deltaY, BOARD_PADDING, maxY))
+      if (dragNode.x !== nextX || dragNode.y !== nextY) {
+        hasMovedNodeDuringDrag.value = true
+        dragNode.x = nextX
+        dragNode.y = nextY
+      }
     }
+    return
+  }
+
+  if (selectionBox.value) {
+    const pointerWorld = boardToWorld(event.clientX, event.clientY)
+    selectionBox.value.currentWorldX = pointerWorld.x
+    selectionBox.value.currentWorldY = pointerWorld.y
+    applySelectionBoxSelection()
     return
   }
 
@@ -804,8 +991,12 @@ const onPointerMove = (event: PointerEvent) => {
 const onPointerUp = () => {
   const movedNode = hasMovedNodeDuringDrag.value
   const movedPan = hasPannedDuringGesture.value
+  if (selectionBox.value) {
+    applySelectionBoxSelection()
+  }
   dragging.value = null
   panning.value = null
+  selectionBox.value = null
   hasMovedNodeDuringDrag.value = false
   hasPannedDuringGesture.value = false
   if (movedNode || movedPan) {
@@ -939,7 +1130,8 @@ const resetCanvas = () => {
   applyErrorMessage.value = null
   applyUndoPayload.value = null
 
-  selectedNodeId.value = null
+  clearSelection()
+  selectionBox.value = null
   pinnedTooltipNodeId.value = null
   hoverPreviewNodeId.value = null
   hoveredNodeId.value = null
@@ -954,25 +1146,31 @@ const resetCanvas = () => {
   void saveStateNow()
 }
 
-const deleteSelectedNode = () => {
-  if (!selectedNodeId.value) return
-  const nodeId = selectedNodeId.value
-  const deletedNode = nodeMap.value.get(nodeId)
+const deleteSelectedNodes = () => {
+  if (selectedNodeIds.value.length === 0) return
+  const selectedIds = new Set(selectedNodeIds.value)
+  const deletedNodes = nodes.value.filter((node) => selectedIds.has(node.id))
 
-  nodes.value = nodes.value.filter((node) => node.id !== nodeId)
-  cables.value = cables.value.filter((cable) => cable.fromNodeId !== nodeId && cable.toNodeId !== nodeId)
+  nodes.value = nodes.value.filter((node) => !selectedIds.has(node.id))
+  cables.value = cables.value.filter((cable) => !selectedIds.has(cable.fromNodeId) && !selectedIds.has(cable.toNodeId))
   const nextExistingByNodeId = { ...existingComponentByNodeId.value }
-  delete nextExistingByNodeId[nodeId]
+  for (const nodeId of selectedIds) {
+    delete nextExistingByNodeId[nodeId]
+  }
   existingComponentByNodeId.value = nextExistingByNodeId
-  if (deletedNode && isNodeInRevealedChain(deletedNode)) {
+  if (deletedNodes.some((node) => isNodeInRevealedChain(node))) {
     clearRevealedChain()
   }
-  if (connectedNoticeNodeId.value === nodeId) {
+  if (connectedNoticeNodeId.value && selectedIds.has(connectedNoticeNodeId.value)) {
     connectedNoticeNodeId.value = null
   }
   dragging.value = null
 
-  if (hoveredNodeId.value === nodeId || hoverPreviewNodeId.value === nodeId || pinnedTooltipNodeId.value === nodeId) {
+  if (
+    (hoveredNodeId.value && selectedIds.has(hoveredNodeId.value)) ||
+    (hoverPreviewNodeId.value && selectedIds.has(hoverPreviewNodeId.value)) ||
+    (pinnedTooltipNodeId.value && selectedIds.has(pinnedTooltipNodeId.value))
+  ) {
     hoveredNodeId.value = null
     hoverPreviewNodeId.value = null
     pinnedTooltipNodeId.value = null
@@ -980,11 +1178,14 @@ const deleteSelectedNode = () => {
     clearHoverTimers()
   }
 
-  if (cableDraft.value?.fromNodeId === nodeId || connectTargetNodeId.value === nodeId) {
+  if (
+    (cableDraft.value?.fromNodeId && selectedIds.has(cableDraft.value.fromNodeId)) ||
+    (connectTargetNodeId.value && selectedIds.has(connectTargetNodeId.value))
+  ) {
     cancelCableDraft()
   }
 
-  selectedNodeId.value = null
+  clearSelection()
   scheduleStateSave()
 }
 
@@ -1042,7 +1243,7 @@ const addNodeFromTemplate = async (item: NodeTemplate) => {
 
   nodes.value.push(createdNode)
 
-  selectedNodeId.value = id
+  selectSingleNode(id)
   closeAddModal()
   scheduleStateSave()
   await lookupExistingComponentForNode(createdNode)
@@ -1117,14 +1318,15 @@ const onWindowKeyDown = (event: KeyboardEvent) => {
   if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return
 
   if (event.key === 'Delete' || event.key === 'Backspace') {
-    if (!hasSelectedNode.value) return
+    if (!hasSelectedNodes.value) return
     event.preventDefault()
-    deleteSelectedNode()
+    deleteSelectedNodes()
     return
   }
 
   if (event.key === 'Escape') {
-    selectedNodeId.value = null
+    clearSelection()
+    selectionBox.value = null
     if (showAddModal.value) {
       closeAddModal()
       return
@@ -1163,7 +1365,7 @@ onBeforeUnmount(() => {
     <header class="node-toolbar">
       <div class="node-toolbar-copy">
         <h2>Routing Canvas</h2>
-        <p>Click a port in node popup to start cable routing, then click another node.</p>
+        <p>Ctrl/Cmd+click to multi-select nodes. Middle-click drag pans. Click a port in node popup to start cable routing.</p>
       </div>
       <div class="persistence-status" :class="{ error: !!persistence.error.value, readonly: persistence.readOnly.value }">
         <span>{{ persistenceStatusLabel }}</span>
@@ -1181,7 +1383,7 @@ onBeforeUnmount(() => {
           {{ isApplyingConnections ? 'Applying...' : 'Apply to wiring' }}
         </button>
         <button class="ghost-btn add-btn" @click="openAddModal">+ Add node</button>
-        <button class="ghost-btn danger-btn" :disabled="!hasSelectedNode" @click="deleteSelectedNode">
+        <button class="ghost-btn danger-btn" :disabled="!hasSelectedNodes" @click="deleteSelectedNodes">
           Delete selected
         </button>
       </div>
@@ -1218,7 +1420,7 @@ onBeforeUnmount(() => {
     <div
       ref="boardRef"
       class="board"
-      :class="{ panning: !!panning, wiring: !!cableDraft }"
+      :class="{ panning: !!panning, wiring: !!cableDraft, selecting: !!selectionBox }"
       @pointerdown="onBoardPointerDown"
       @wheel="onBoardWheel"
     >
@@ -1236,6 +1438,7 @@ onBeforeUnmount(() => {
 
           <path v-if="draftCablePath" class="cable-path draft" :d="draftCablePath" />
         </svg>
+        <div v-if="selectionBox" class="selection-box" :style="selectionBoxStyle"></div>
 
         <article
           v-for="node in nodes"
@@ -1244,8 +1447,8 @@ onBeforeUnmount(() => {
           :class="[
             getNodeClass(node.kind),
             {
-              dragging: dragging?.nodeId === node.id,
-              selected: selectedNodeId === node.id,
+              dragging: isNodeDragging(node.id),
+              selected: isNodeSelected(node.id),
               'already-connected': !!existingComponentByNodeId[node.id],
               'chain-highlight': isNodeInRevealedChain(node),
             },
@@ -1576,6 +1779,10 @@ onBeforeUnmount(() => {
   cursor: crosshair;
 }
 
+.board.selecting {
+  cursor: crosshair;
+}
+
 .world {
   position: absolute;
   inset: 0;
@@ -1593,6 +1800,15 @@ onBeforeUnmount(() => {
   inset: 0;
   width: 100%;
   height: 100%;
+}
+
+.selection-box {
+  position: absolute;
+  border: 1px solid rgba(115, 168, 212, 0.95);
+  background: rgba(115, 168, 212, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  pointer-events: none;
+  z-index: 3;
 }
 
 .cable-path {

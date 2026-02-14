@@ -165,6 +165,7 @@ export const graphStore = reactive({
       const created = await api.createConnection({ a, b })
       const duplicate = this.edges.some((edge) => edge.id === created.id)
       if (!duplicate) this.edges.push(created)
+      await store.syncConnectionsProjectionSafe()
       this.resetSelection()
       return true
     } catch (err: any) {
@@ -179,6 +180,7 @@ export const graphStore = reactive({
     try {
       await api.deleteConnection(edgeId)
       this.edges = this.edges.filter((edge) => edge.id !== edgeId)
+      await store.syncConnectionsProjectionSafe()
       if (this.selection.selectedEdgeId === edgeId) {
         this.selection.selectedEdgeId = null
       }
