@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, watchEffect, onBeforeUnmount, onMounted, type ComponentPublicInstance, type VNodeRef } from 'vue'
 import { useAuth } from '@clerk/vue'
-import { api } from '../lib/api'
+import { api, type ApiCatalogItemDetails, type ApiCatalogSearchItem } from '../lib/api'
 import { useEntitlements } from '@/lib/useEntitlements'
 import { guardAiDetection } from '@/lib/aiDetectionGuard'
 import { quotaStore } from '@/stores/quota'
@@ -127,7 +127,7 @@ const filteredDevices = computed(() => {
 
 const selectedDevice = ref<Device | null>(null)
 const showAddModal = ref(false)
-const addDeviceMode = ref<'manual' | 'ai'>('manual')
+const addDeviceMode = ref<'manual' | 'ai' | 'catalog'>('manual')
 const editingDeviceId = ref<number | null>(null)
 const editSnapshot = ref<{ device: { name: string; type: string; category: string }; ports: DevicePort[] } | null>(null)
 const deleteTarget = ref<Device | null>(null)
@@ -167,9 +167,36 @@ const aiPreviewUrl = ref<string | null>(null)
 const aiLoading = ref(false)
 const aiStatusMessage = ref<string | null>(null)
 const isEditing = computed(() => editingDeviceId.value !== null)
+const canUseCatalog = ref(false)
+const catalogStatusReason = ref<string | null>(null)
+const catalogQuery = ref('')
+const catalogResults = ref<ApiCatalogSearchItem[]>([])
+const catalogSearchLoading = ref(false)
+const catalogSearchError = ref<string | null>(null)
+const catalogDetailsLoading = ref(false)
+const selectedCatalogExternalId = ref<string | null>(null)
+const selectedCatalogItem = ref<ApiCatalogItemDetails | null>(null)
+const selectedCatalogSource = ref<{
+  provider: string
+  externalId: string
+  sourceUrl?: string | null
+  importedSnapshot: Record<string, unknown>
+} | null>(null)
 
 watch(canUseAiDetection, (allowed) => {
   if (!allowed && addDeviceMode.value === 'ai') {
+    addDeviceMode.value = 'manual'
+  }
+})
+
+watch(isEditing, (editing) => {
+  if (editing && addDeviceMode.value === 'catalog') {
+    addDeviceMode.value = 'manual'
+  }
+})
+
+watch(canUseCatalog, (available) => {
+  if (!available && addDeviceMode.value === 'catalog') {
     addDeviceMode.value = 'manual'
   }
 })
@@ -262,6 +289,125 @@ const normalizeDeviceType = (value: string | null | undefined, category?: string
   return defaults[String(category || fallbackDeviceCategory)] || fallbackDeviceType
 }
 
+const inferCatalogCategory = (item: ApiCatalogItemDetails) => {
+  const tokens = [
+    item.category_path || '',
+    item.title || '',
+    item.model || '',
+    String(item.specs?.['Type'] || ''),
+    String(item.specs?.['Connectivity'] || ''),
+  ]
+    .join(' ')
+    .toLowerCase()
+
+  if (tokens.includes('microphone') || tokens.includes('mic')) return 'MIC'
+  if (tokens.includes('preamp')) return 'PREAMP'
+  if (tokens.includes('interface')) return 'INTERFACE'
+  if (tokens.includes('compressor')) return 'COMPRESSOR'
+  if (tokens.includes('patch')) return 'PATCHPANEL'
+  if (tokens.includes('monitor')) return 'MONITOR'
+  if (tokens.includes('headphone')) return 'HEADPHONE_AMP'
+  if (tokens.includes('mixer')) return 'MIXER'
+  if (tokens.includes('controller')) return 'CONTROLLER'
+  if (tokens.includes('effects')) return 'EFFECTS'
+  if (tokens.includes('amp')) return 'AMP'
+  return 'OTHER'
+}
+
+const clearCatalogSelection = () => {
+  selectedCatalogExternalId.value = null
+  selectedCatalogItem.value = null
+  selectedCatalogSource.value = null
+}
+
+const loadCatalogStatus = async () => {
+  canUseCatalog.value = false
+  catalogStatusReason.value = null
+  try {
+    const status = await api.getCatalogStatus()
+    const ebay = status.providers.find((provider) => provider.provider === 'EBAY')
+    canUseCatalog.value = Boolean(status.enabled && ebay?.available)
+    catalogStatusReason.value = ebay?.reason || null
+  } catch {
+    canUseCatalog.value = false
+    catalogStatusReason.value = t.devices.catalogUnavailable
+  }
+}
+
+const searchCatalog = async () => {
+  const q = catalogQuery.value.trim()
+  if (q.length < 2) {
+    catalogResults.value = []
+    catalogSearchError.value = t.devices.catalogSearchMin
+    return
+  }
+
+  catalogSearchLoading.value = true
+  catalogSearchError.value = null
+  try {
+    const response = await api.searchCatalog({ provider: 'EBAY', q, page: 1, page_size: 20 })
+    catalogResults.value = response.items
+    if (response.items.length === 0) {
+      catalogSearchError.value = t.devices.catalogNoResults
+    }
+  } catch (err: any) {
+    if (err?.message === 'AUTH_SERVICE_UNAVAILABLE') {
+      catalogSearchError.value = t.devices.catalogUnavailable
+    } else {
+      catalogSearchError.value = err?.message || t.devices.catalogSearchFailed
+    }
+  } finally {
+    catalogSearchLoading.value = false
+  }
+}
+
+const applyCatalogItemToForm = (item: ApiCatalogItemDetails) => {
+  const category = inferCatalogCategory(item)
+  const type = normalizeDeviceType(item.model || '', category)
+  const preferredName = [item.brand, item.model].filter(Boolean).join(' ').trim() || item.title
+
+  newDevice.value = {
+    name: preferredName || '',
+    category,
+    type,
+  }
+  newPorts.value = []
+  selectedCatalogSource.value = {
+    provider: item.provider,
+    externalId: item.external_id,
+    sourceUrl: item.source_url,
+    importedSnapshot: {
+      title: item.title,
+      brand: item.brand,
+      model: item.model,
+      category_path: item.category_path,
+      category_id: item.category_id,
+      identifiers: item.identifiers || {},
+      specs: item.specs || {},
+      source_url: item.source_url || null,
+    },
+  }
+}
+
+const selectCatalogItem = async (item: ApiCatalogSearchItem) => {
+  selectedCatalogExternalId.value = item.external_id
+  catalogDetailsLoading.value = true
+  try {
+    const details = await api.getCatalogItem(item.provider, item.external_id)
+    selectedCatalogItem.value = details
+    applyCatalogItemToForm(details)
+    addDeviceMode.value = 'manual'
+  } catch (err: any) {
+    if (err?.message === 'AUTH_SERVICE_UNAVAILABLE') {
+      showError(t.devices.catalogUnavailable)
+    } else {
+      showError(err?.message || t.devices.catalogLoadFailed)
+    }
+  } finally {
+    catalogDetailsLoading.value = false
+  }
+}
+
 const saveDraft = () => {
   if (isEditing.value) return
   const draft = {
@@ -308,6 +454,10 @@ const resetAddForm = (clear = false) => {
   newPorts.value = []
   addDeviceMode.value = 'manual'
   aiStatusMessage.value = null
+  clearCatalogSelection()
+  catalogQuery.value = ''
+  catalogResults.value = []
+  catalogSearchError.value = null
   if (aiPreviewUrl.value) {
     URL.revokeObjectURL(aiPreviewUrl.value)
   }
@@ -331,6 +481,7 @@ const closeAddModal = () => {
 
 const openAddModal = () => {
   showAddModal.value = true
+  void loadCatalogStatus()
   loadDraft()
 }
 
@@ -357,6 +508,7 @@ const openEditModal = (device: Device) => {
   }))
   addDeviceMode.value = 'manual'
   aiStatusMessage.value = null
+  clearCatalogSelection()
   showAddModal.value = true
 }
 
@@ -475,6 +627,7 @@ const handleResetForm = () => {
       patchbayId: port.patchbayId,
     }))
     aiStatusMessage.value = null
+    clearCatalogSelection()
     return
   }
   resetAddForm(true)
@@ -497,6 +650,7 @@ const handleAiFileChange = async (event: Event) => {
   setAiImageFile(file)
   // Also set as pending image for auto-attach
   setPendingImageFile(file)
+  selectedCatalogSource.value = null
   aiStatusMessage.value = null
   aiLoading.value = true
 
@@ -583,6 +737,14 @@ const handleAddDevice = async () => {
         category: newDevice.value.category,
         type: newDevice.value.type,
         ports,
+        catalogSource: selectedCatalogSource.value
+          ? {
+              provider: selectedCatalogSource.value.provider,
+              externalId: selectedCatalogSource.value.externalId,
+              sourceUrl: selectedCatalogSource.value.sourceUrl,
+              importedSnapshot: selectedCatalogSource.value.importedSnapshot,
+            }
+          : null,
       })
       deviceId = created.id
     }
@@ -1001,6 +1163,16 @@ onBeforeUnmount(() => {
           >
             {{ t.devices.tabAutoDetect }}
           </button>
+          <button
+            v-if="!isEditing"
+            class="tab-btn"
+            :class="{ active: addDeviceMode === 'catalog', disabled: !canUseCatalog }"
+            :disabled="!canUseCatalog"
+            :title="!canUseCatalog ? (catalogStatusReason || t.devices.catalogUnavailable) : ''"
+            @click="addDeviceMode = 'catalog'"
+          >
+            {{ t.devices.tabCatalog }}
+          </button>
         </div>
         <div class="form-content">
           <div v-if="addDeviceMode === 'manual'" class="manual-form">
@@ -1020,6 +1192,9 @@ onBeforeUnmount(() => {
               <label>{{ t.devices.typeLabel }}</label>
               <input v-model="newDevice.type" :placeholder="t.devices.subtypePlaceholder || 'Subtype'" />
             </div>
+            <p v-if="selectedCatalogSource && newPorts.length === 0" class="help-text">
+              {{ t.devices.catalogPortsHint }}
+            </p>
             <div class="form-group">
               <label>Device Image (optional)</label>
               <p class="help-text">Maximum 12MB. Supported formats: JPG, PNG, WebP</p>
@@ -1090,7 +1265,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
 
-          <div v-else class="ai-form">
+          <div v-else-if="addDeviceMode === 'ai'" class="ai-form">
             <div class="ai-stepper">
               <span :class="{ active: aiStep === 'upload' }">{{ t.devices.aiSteps.upload }}</span>
               <span :class="{ active: aiStep === 'processing' }">{{ t.devices.aiSteps.processing }}</span>
@@ -1123,6 +1298,42 @@ onBeforeUnmount(() => {
                 {{ t.devices.aiReviewDraft }}
               </button>
             </div>
+          </div>
+          <div v-else class="catalog-form">
+            <p class="help-text">{{ t.devices.catalogHelp }}</p>
+            <div class="catalog-search-row">
+              <input
+                v-model="catalogQuery"
+                class="search-input"
+                :placeholder="t.devices.catalogSearchPlaceholder"
+                @keyup.enter="searchCatalog"
+              />
+              <button class="add-btn" type="button" @click="searchCatalog" :disabled="catalogSearchLoading">
+                {{ catalogSearchLoading ? t.devices.catalogSearching : t.devices.catalogSearchAction }}
+              </button>
+            </div>
+            <p v-if="catalogSearchError" class="error-text">{{ catalogSearchError }}</p>
+            <div class="catalog-results">
+              <button
+                v-for="item in catalogResults"
+                :key="item.external_id"
+                type="button"
+                class="catalog-result-card"
+                :class="{ active: selectedCatalogExternalId === item.external_id }"
+                @click="selectCatalogItem(item)"
+              >
+                <img v-if="item.thumbnail" :src="item.thumbnail" :alt="item.title" />
+                <div class="catalog-result-body">
+                  <strong>{{ item.title }}</strong>
+                  <span v-if="item.brand || item.model">{{ [item.brand, item.model].filter(Boolean).join(' ') }}</span>
+                  <small v-if="item.short_specs?.length">{{ item.short_specs.join(' • ') }}</small>
+                </div>
+              </button>
+            </div>
+            <p v-if="catalogDetailsLoading" class="help-text">{{ t.devices.catalogLoadingDetails }}</p>
+            <p v-if="selectedCatalogItem" class="help-text">
+              {{ t.devices.catalogSelectedHint }}
+            </p>
           </div>
         </div>
         <div class="form-footer">
@@ -1467,6 +1678,61 @@ onBeforeUnmount(() => {
 .manual-form,
 .ai-form {
   padding: var(--space-4);
+}
+
+.catalog-form {
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.catalog-search-row {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.catalog-search-row .search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.catalog-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  max-height: 260px;
+  overflow: auto;
+}
+
+.catalog-result-card {
+  width: 100%;
+  display: flex;
+  gap: var(--space-2);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  padding: var(--space-2);
+  cursor: pointer;
+  text-align: left;
+}
+
+.catalog-result-card.active {
+  border-color: var(--accent);
+}
+
+.catalog-result-card img {
+  width: 56px;
+  height: 56px;
+  object-fit: cover;
+  border-radius: var(--radius-1);
+}
+
+.catalog-result-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .add-device-tabs {

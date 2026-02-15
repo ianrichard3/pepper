@@ -29,6 +29,13 @@ export interface Device {
   imageUpdatedAt?: string | null;
 }
 
+export interface DeviceCatalogSource {
+  provider: string
+  externalId: string
+  sourceUrl?: string | null
+  importedSnapshot?: Record<string, unknown>
+}
+
 interface PendingLink {
   portId: string;
   deviceId: number;
@@ -484,9 +491,15 @@ export const store = reactive({
     }
   },
   
-  async addDevice(device: Omit<Device, 'id'>): Promise<Device> {
+  async addDevice(device: {
+    name: string
+    type: string
+    category: string
+    ports: DevicePort[]
+    catalogSource?: DeviceCatalogSource | null
+  }): Promise<Device> {
     try {
-      const apiDevice = await api.createDevice({
+      const payload: Parameters<typeof api.createDevice>[0] = {
         name: device.name,
         type: device.type,
         category: device.category,
@@ -495,7 +508,17 @@ export const store = reactive({
           type: p.type,
           patchbay_id: p.patchbayId,
         })),
-      })
+      }
+      if (device.catalogSource) {
+        payload.catalog_source = {
+          provider: device.catalogSource.provider,
+          external_id: device.catalogSource.externalId,
+          source_url: device.catalogSource.sourceUrl ?? null,
+          imported_snapshot: device.catalogSource.importedSnapshot || {},
+        }
+      }
+
+      const apiDevice = await api.createDevice(payload)
       
       const newDevice = apiDeviceToDevice(apiDevice)
       this.devices.push(newDevice)

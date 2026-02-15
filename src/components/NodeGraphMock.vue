@@ -1158,32 +1158,6 @@ const connectDraftToTargetPort = (targetPortId: string) => {
   scheduleStateSave()
 }
 
-const resetCanvas = () => {
-  nodes.value = buildDefaultNodesFromDevices()
-  cables.value = []
-  existingComponentByNodeId.value = {}
-  connectedNoticeNodeId.value = null
-  clearRevealedChain()
-  applyStatusMessage.value = null
-  applyErrorMessage.value = null
-  applyUndoPayload.value = null
-
-  clearSelection()
-  selectionBox.value = null
-  pinnedTooltipNodeId.value = null
-  hoverPreviewNodeId.value = null
-  hoveredNodeId.value = null
-  hoverProgress.value = 0
-  hoveredCableId.value = null
-  isHoveringCableTooltip.value = false
-  clearCableHideTimer()
-  isHoveringTooltip.value = false
-  clearHoverTimers()
-  clearHideHoverTimer()
-  cancelCableDraft()
-  void saveStateNow()
-}
-
 const deleteSelectedNodes = () => {
   if (selectedNodeIds.value.length === 0) return
   const selectedIds = new Set(selectedNodeIds.value)

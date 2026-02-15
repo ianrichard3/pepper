@@ -136,6 +136,12 @@ export interface ApiDeviceCreate {
   name: string
   type?: string
   category?: string
+  catalog_source?: {
+    provider: string
+    external_id: string
+    source_url?: string | null
+    imported_snapshot?: Record<string, unknown>
+  }
   ports: Array<{
     label: string
     type: 'Input' | 'Output' | 'Other'
@@ -153,6 +159,51 @@ export interface ApiDeviceUpdate {
     type: 'Input' | 'Output' | 'Other'
     patchbay_id?: number | null
   }>
+}
+
+export interface ApiCatalogStatusResponse {
+  enabled: boolean
+  providers: Array<{
+    provider: string
+    available: boolean
+    reason?: string | null
+  }>
+}
+
+export interface ApiCatalogSearchItem {
+  provider: string
+  external_id: string
+  title: string
+  thumbnail?: string | null
+  brand?: string | null
+  model?: string | null
+  short_specs?: string[]
+  source_url?: string | null
+}
+
+export interface ApiCatalogSearchResponse {
+  items: ApiCatalogSearchItem[]
+  page_info: {
+    page: number
+    page_size: number
+    total?: number | null
+    next_page_token?: string | null
+  }
+}
+
+export interface ApiCatalogItemDetails {
+  provider: string
+  external_id: string
+  title: string
+  images: string[]
+  brand?: string | null
+  model?: string | null
+  category_path?: string | null
+  category_id?: string | null
+  identifiers?: Record<string, unknown>
+  specs?: Record<string, unknown>
+  source_url?: string | null
+  attribution?: string | null
 }
 
 export interface AuthContextResponse {
@@ -313,6 +364,35 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     })
+  },
+
+  async getCatalogStatus(): Promise<ApiCatalogStatusResponse> {
+    return requestJson<ApiCatalogStatusResponse>('/api/catalog/status')
+  },
+
+  async searchCatalog(payload: {
+    provider: string
+    q: string
+    page?: number
+    page_size?: number
+    brand?: string
+    device_type?: string
+    condition?: string
+  }): Promise<ApiCatalogSearchResponse> {
+    const params = new URLSearchParams({
+      provider: payload.provider,
+      q: payload.q,
+      page: String(payload.page ?? 1),
+      page_size: String(payload.page_size ?? 20),
+    })
+    if (payload.brand) params.set('brand', payload.brand)
+    if (payload.device_type) params.set('device_type', payload.device_type)
+    if (payload.condition) params.set('condition', payload.condition)
+    return requestJson<ApiCatalogSearchResponse>(`/api/catalog/search?${params.toString()}`)
+  },
+
+  async getCatalogItem(provider: string, externalId: string): Promise<ApiCatalogItemDetails> {
+    return requestJson<ApiCatalogItemDetails>(`/api/catalog/items/${encodeURIComponent(provider)}/${encodeURIComponent(externalId)}`)
   },
 
   async deleteDevice(deviceId: number): Promise<ApiDevice> {
