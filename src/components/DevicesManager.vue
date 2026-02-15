@@ -119,6 +119,7 @@ const filteredDevices = computed(() => {
   const query = searchQuery.value.toLowerCase()
   return store.devices.filter(device =>
     device.name.toLowerCase().includes(query) ||
+    device.category.toLowerCase().includes(query) ||
     device.type.toLowerCase().includes(query) ||
     device.ports.some(p => p.label.toLowerCase().includes(query))
   )
@@ -128,18 +129,36 @@ const selectedDevice = ref<Device | null>(null)
 const showAddModal = ref(false)
 const addDeviceMode = ref<'manual' | 'ai'>('manual')
 const editingDeviceId = ref<number | null>(null)
-const editSnapshot = ref<{ device: { name: string; type: string }; ports: DevicePort[] } | null>(null)
+const editSnapshot = ref<{ device: { name: string; type: string; category: string }; ports: DevicePort[] } | null>(null)
 const deleteTarget = ref<Device | null>(null)
 const DRAFT_STORAGE_KEY = 'el-riche.addDeviceDraft'
 const LEGACY_DRAFT_STORAGE_KEY = 'pepper.addDeviceDraft'
 
-const deviceTypeOptions = t.devices.deviceTypes
+const deviceCategoryOptions = [
+  'MIC',
+  'PREAMP',
+  'INTERFACE',
+  'COMPRESSOR',
+  'PATCHPANEL',
+  'INSTRUMENT',
+  'MONITOR',
+  'HEADPHONE_AMP',
+  'EQ',
+  'MIXER',
+  'CONTROLLER',
+  'EFFECTS',
+  'AMP',
+  'REAMP',
+  'OTHER',
+] as const
 const portTypeOptions = Object.keys(t.devices.portTypes) as Array<keyof typeof t.devices.portTypes>
-const fallbackDeviceType = deviceTypeOptions[deviceTypeOptions.length - 1]
+const fallbackDeviceCategory = 'OTHER'
+const fallbackDeviceType = 'other'
 
 const newDevice = ref({
   name: '',
-  type: deviceTypeOptions[0],
+  category: fallbackDeviceCategory,
+  type: fallbackDeviceType,
 })
 
 const newPorts = ref<Array<{ id?: string; label: string; type: 'Input' | 'Output' | 'Other'; patchbayId?: number | null }>>([])
@@ -188,11 +207,59 @@ const closeDetail = () => {
   selectedDevice.value = null
 }
 
-const normalizeDeviceType = (value: string | null | undefined) => {
-  const raw = value?.trim()
-  if (!raw) return fallbackDeviceType
-  const match = deviceTypeOptions.find(option => option.toLowerCase() === raw.toLowerCase())
-  return match || fallbackDeviceType
+const normalizeDeviceCategory = (value: string | null | undefined, subtype?: string | null) => {
+  const raw = (value || '').trim().toUpperCase()
+  if (deviceCategoryOptions.includes(raw as typeof deviceCategoryOptions[number])) return raw
+  const token = String(subtype || '').trim().toLowerCase().replace(/[-\s]+/g, '_')
+  const map: Record<string, string> = {
+    mic: 'MIC',
+    preamp: 'PREAMP',
+    interface: 'INTERFACE',
+    compressor: 'COMPRESSOR',
+    patchpanel: 'PATCHPANEL',
+    patch_panel: 'PATCHPANEL',
+    patchbay: 'PATCHPANEL',
+    panel: 'PATCHPANEL',
+    instrument: 'INSTRUMENT',
+    synth: 'INSTRUMENT',
+    drum_machine: 'INSTRUMENT',
+    monitor: 'MONITOR',
+    headphone_amp: 'HEADPHONE_AMP',
+    eq: 'EQ',
+    mixer: 'MIXER',
+    controller: 'CONTROLLER',
+    effects: 'EFFECTS',
+    amp: 'AMP',
+    reamp: 'REAMP',
+  }
+  return map[token] || fallbackDeviceCategory
+}
+
+const normalizeDeviceType = (value: string | null | undefined, category?: string | null) => {
+  const token = String(value || '').trim().toLowerCase().replace(/[-\s]+/g, '_')
+  if (token) {
+    if (token === 'patchbay' || token === 'panel' || token === 'patch_panel') return 'patchpanel'
+    if (token === 'unknown') return 'other'
+    return token
+  }
+  const defaults: Record<string, string> = {
+    MIC: 'mic',
+    PREAMP: 'preamp',
+    INTERFACE: 'interface',
+    COMPRESSOR: 'compressor',
+    PATCHPANEL: 'patchpanel',
+    INSTRUMENT: 'instrument',
+    MONITOR: 'monitor',
+    HEADPHONE_AMP: 'headphone_amp',
+    EQ: 'eq',
+    MIXER: 'mixer',
+    CONTROLLER: 'controller',
+    EFFECTS: 'effects',
+    AMP: 'amp',
+    REAMP: 'reamp',
+    OTHER: 'other',
+  }
+  return defaults[String(category || fallbackDeviceCategory)] || fallbackDeviceType
 }
 
 const saveDraft = () => {
@@ -212,7 +279,8 @@ const loadDraft = () => {
     if (draft?.device?.name !== undefined && draft?.device?.type !== undefined) {
       newDevice.value = {
         name: String(draft.device.name ?? ''),
-        type: normalizeDeviceType(String(draft.device.type ?? fallbackDeviceType)),
+        category: normalizeDeviceCategory(String(draft.device.category ?? ''), String(draft.device.type ?? '')),
+        type: normalizeDeviceType(String(draft.device.type ?? fallbackDeviceType), String(draft.device.category ?? fallbackDeviceCategory)),
       }
     }
     if (Array.isArray(draft?.ports)) {
@@ -236,7 +304,7 @@ const clearDraft = () => {
 }
 
 const resetAddForm = (clear = false) => {
-  newDevice.value = { name: '', type: deviceTypeOptions[0] }
+  newDevice.value = { name: '', category: fallbackDeviceCategory, type: fallbackDeviceType }
   newPorts.value = []
   addDeviceMode.value = 'manual'
   aiStatusMessage.value = null
@@ -269,10 +337,18 @@ const openAddModal = () => {
 const openEditModal = (device: Device) => {
   editingDeviceId.value = device.id
   editSnapshot.value = {
-    device: { name: device.name, type: normalizeDeviceType(device.type) },
+    device: {
+      name: device.name,
+      category: normalizeDeviceCategory(device.category, device.type),
+      type: normalizeDeviceType(device.type, device.category),
+    },
     ports: device.ports.map(port => ({ ...port })),
   }
-  newDevice.value = { name: device.name, type: normalizeDeviceType(device.type) }
+  newDevice.value = {
+    name: device.name,
+    category: normalizeDeviceCategory(device.category, device.type),
+    type: normalizeDeviceType(device.type, device.category),
+  }
   newPorts.value = device.ports.map(port => ({
     id: port.id,
     label: port.label,
@@ -432,7 +508,8 @@ const handleAiFileChange = async (event: Event) => {
     }
     newDevice.value = {
       name: device.name || '',
-      type: normalizeDeviceType(device.type),
+      category: normalizeDeviceCategory(device.category, device.type),
+      type: normalizeDeviceType(device.type, device.category),
     }
     newPorts.value = device.ports.map((port) => ({
       label: port.label,
@@ -490,6 +567,7 @@ const handleAddDevice = async () => {
     if (isEditing.value && editingDeviceId.value !== null) {
       const updated = await store.updateDevice(editingDeviceId.value, {
         name: newDevice.value.name,
+        category: newDevice.value.category,
         type: newDevice.value.type,
         ports,
       })
@@ -502,6 +580,7 @@ const handleAddDevice = async () => {
     } else {
       const created = await store.addDevice({
         name: newDevice.value.name,
+        category: newDevice.value.category,
         type: newDevice.value.type,
         ports,
       })
@@ -600,6 +679,12 @@ const patchTargetLabel = (port: DevicePort) => {
   return t.devices.goToPatch(port.patchbayId)
 }
 
+const deviceClassificationLabel = (device: Device) => {
+  const subtype = normalizeDeviceType(device.type, device.category)
+  if (!subtype || subtype === 'other') return device.category
+  return `${device.category} · ${subtype}`
+}
+
 watch([newDevice, newPorts], () => {
   if (showAddModal.value && !isEditing.value) {
     saveDraft()
@@ -696,7 +781,7 @@ onBeforeUnmount(() => {
           <div class="device-header">
             <h3>{{ device.name }}</h3>
             <div class="device-meta">
-              <span class="device-type">{{ device.type }}</span>
+              <span class="device-type">{{ deviceClassificationLabel(device) }}</span>
               <button class="edit-btn" @click.stop="openEditModal(device)" :aria-label="t.devices.editDevice">
                 <svg viewBox="0 0 24 24" aria-hidden="true">
                   <path d="M4 16.25V20h3.75L19.81 7.94l-3.75-3.75L4 16.25zm14.71-9.46a1 1 0 0 0 0-1.41l-1.09-1.09a1 1 0 0 0-1.41 0l-1.13 1.13 3.75 3.75 1.88-1.88z"/>
@@ -714,7 +799,7 @@ onBeforeUnmount(() => {
         <div class="panel-header">
           <div class="panel-title">
             <h3>{{ selectedDevice.name }}</h3>
-            <span class="device-type">{{ selectedDevice.type }}</span>
+            <span class="device-type">{{ deviceClassificationLabel(selectedDevice) }}</span>
           </div>
           <div class="panel-actions">
             <button class="ghost-btn" @click="openEditModal(selectedDevice)">{{ t.devices.editDevice }}</button>
@@ -754,7 +839,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           
-          <p><strong>{{ t.devices.typeLabel }}:</strong> {{ selectedDevice.type }}</p>
+          <p><strong>{{ t.devices.typeLabel }}:</strong> {{ deviceClassificationLabel(selectedDevice) }}</p>
           <p><strong>{{ t.devices.idLabel }}:</strong> {{ selectedDevice.id }}</p>
 
           <h4>{{ t.devices.portsConfig }}</h4>
@@ -843,7 +928,7 @@ onBeforeUnmount(() => {
             </div>
           </div>
           
-          <p><strong>{{ t.devices.typeLabel }}:</strong> {{ selectedDevice.type }}</p>
+          <p><strong>{{ t.devices.typeLabel }}:</strong> {{ deviceClassificationLabel(selectedDevice) }}</p>
           <p><strong>{{ t.devices.idLabel }}:</strong> {{ selectedDevice.id }}</p>
 
           <h3>{{ t.devices.portsConfig }}</h3>
@@ -924,12 +1009,16 @@ onBeforeUnmount(() => {
               <input v-model="newDevice.name" :placeholder="t.devices.namePlaceholder" />
             </div>
             <div class="form-group">
-              <label>{{ t.devices.typeLabel }}</label>
-              <select v-model="newDevice.type">
-                <option v-for="option in deviceTypeOptions" :key="option" :value="option">
+              <label>{{ t.devices.categoryLabel || 'Category' }}</label>
+              <select v-model="newDevice.category">
+                <option v-for="option in deviceCategoryOptions" :key="option" :value="option">
                   {{ option }}
                 </option>
               </select>
+            </div>
+            <div class="form-group">
+              <label>{{ t.devices.typeLabel }}</label>
+              <input v-model="newDevice.type" :placeholder="t.devices.subtypePlaceholder || 'Subtype'" />
             </div>
             <div class="form-group">
               <label>Device Image (optional)</label>

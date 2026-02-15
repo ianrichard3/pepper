@@ -5,7 +5,8 @@ import type { Device } from '@/store'
 const makeDevice = (): Device => ({
   id: 1,
   name: 'Synth',
-  type: 'Other',
+  category: 'INSTRUMENT',
+  type: 'synth',
   ports: [],
   imageUrl: '/images/1.png',
   imageUpdatedAt: '2025-01-01T00:00:00Z',

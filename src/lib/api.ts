@@ -23,6 +23,7 @@ export interface ApiDevice {
   id: number
   name: string
   type: string
+  category: string
   ports: ApiPort[]
   image_url?: string | null
   image_updated_at?: string | null
@@ -133,7 +134,8 @@ export interface ApiConnectionCreate {
 
 export interface ApiDeviceCreate {
   name: string
-  type: string
+  type?: string
+  category?: string
   ports: Array<{
     label: string
     type: 'Input' | 'Output' | 'Other'
@@ -143,7 +145,8 @@ export interface ApiDeviceCreate {
 
 export interface ApiDeviceUpdate {
   name: string
-  type: string
+  type?: string
+  category?: string
   ports: Array<{
     id?: string
     label: string
@@ -571,7 +574,7 @@ function buildDeviceFromExtraction(extraction: AIDeviceExtraction): ApiDevice {
   const brand = (extraction.device?.brand || '').trim()
   const model = (extraction.device?.model || '').trim()
   const name = brand && model ? `${brand} ${model}` : (brand || model || 'Unknown device')
-  const type = extraction.device?.category || 'Other'
+  const { category, type } = normalizeDeviceClassification(extraction.device?.category || null)
 
   const ports: ApiPort[] = extraction.ports.map((port, index) => ({
     id: `ai-dev-0-port-${index + 1}`,
@@ -583,11 +586,49 @@ function buildDeviceFromExtraction(extraction: AIDeviceExtraction): ApiDevice {
   return {
     id: 0,
     name,
+    category,
     type,
     ports,
     image_url: null,
     image_updated_at: null,
   }
+}
+
+function normalizeDeviceClassification(rawTypeOrCategory?: string | null): { category: string; type: string } {
+  const token = String(rawTypeOrCategory || '').trim().toLowerCase().replace(/[-\s]+/g, '_')
+  const categoryByAlias: Record<string, string> = {
+    mic: 'MIC',
+    preamp: 'PREAMP',
+    interface: 'INTERFACE',
+    compressor: 'COMPRESSOR',
+    patchpanel: 'PATCHPANEL',
+    patch_panel: 'PATCHPANEL',
+    panel: 'PATCHPANEL',
+    patchbay: 'PATCHPANEL',
+    instrument: 'INSTRUMENT',
+    synth: 'INSTRUMENT',
+    drum_machine: 'INSTRUMENT',
+    monitor: 'MONITOR',
+    headphone_amp: 'HEADPHONE_AMP',
+    eq: 'EQ',
+    mixer: 'MIXER',
+    controller: 'CONTROLLER',
+    effects: 'EFFECTS',
+    amp: 'AMP',
+    reamp: 'REAMP',
+    other: 'OTHER',
+    unknown: 'OTHER',
+  }
+  const subtypeByAlias: Record<string, string> = {
+    patch_panel: 'patchpanel',
+    panel: 'patchpanel',
+    patchbay: 'patchpanel',
+    unknown: 'other',
+  }
+
+  const category = categoryByAlias[token] || 'OTHER'
+  const type = subtypeByAlias[token] || token || 'other'
+  return { category, type }
 }
 
 function mapAIPortDirection(direction?: string | null): 'Input' | 'Output' | 'Other' {

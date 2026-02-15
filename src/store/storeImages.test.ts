@@ -39,7 +39,8 @@ describe('store image flow', () => {
       {
         id: 1,
         name: 'Drum Machine',
-        type: 'Other',
+        category: 'OTHER',
+        type: 'other',
         ports: [],
         imageUrl: '/images/1.png',
         imageUpdatedAt: 'old',
@@ -50,7 +51,8 @@ describe('store image flow', () => {
     uploadDeviceImage.mockResolvedValue({
       id: 1,
       name: 'Drum Machine',
-      type: 'Other',
+      category: 'OTHER',
+      type: 'other',
       ports: [],
       image_url: '/images/1.png',
       image_updated_at: 'new',

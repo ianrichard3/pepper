@@ -23,6 +23,7 @@ export interface Device {
   id: number;
   name: string;
   type: string;
+  category: string;
   ports: DevicePort[];
   imageUrl?: string | null;
   imageUpdatedAt?: string | null;
@@ -84,10 +85,37 @@ function apiDeviceToDevice(apiDevice: ApiDevice): Device {
     id: apiDevice.id,
     name: apiDevice.name,
     type: apiDevice.type,
+    category: apiDevice.category || inferCategoryFromType(apiDevice.type),
     ports: apiDevice.ports.map(apiPortToDevicePort),
     imageUrl: apiDevice.image_url,
     imageUpdatedAt: apiDevice.image_updated_at,
   }
+}
+
+function inferCategoryFromType(type: string | null | undefined): string {
+  const token = String(type || '').trim().toLowerCase().replace(/[-\s]+/g, '_')
+  const map: Record<string, string> = {
+    mic: 'MIC',
+    preamp: 'PREAMP',
+    interface: 'INTERFACE',
+    compressor: 'COMPRESSOR',
+    patchpanel: 'PATCHPANEL',
+    patch_panel: 'PATCHPANEL',
+    patchbay: 'PATCHPANEL',
+    panel: 'PATCHPANEL',
+    instrument: 'INSTRUMENT',
+    synth: 'INSTRUMENT',
+    drum_machine: 'INSTRUMENT',
+    monitor: 'MONITOR',
+    headphone_amp: 'HEADPHONE_AMP',
+    eq: 'EQ',
+    mixer: 'MIXER',
+    controller: 'CONTROLLER',
+    effects: 'EFFECTS',
+    amp: 'AMP',
+    reamp: 'REAMP',
+  }
+  return map[token] || 'OTHER'
 }
 
 function apiPatchbayToNode(apiPoint: ApiPatchbayPoint): PatchBayNode {
@@ -461,6 +489,7 @@ export const store = reactive({
       const apiDevice = await api.createDevice({
         name: device.name,
         type: device.type,
+        category: device.category,
         ports: device.ports.map(p => ({
           label: p.label,
           type: p.type,
@@ -479,11 +508,12 @@ export const store = reactive({
     }
   },
 
-  async updateDevice(id: number, payload: { name: string; type: string; ports: DevicePort[] }): Promise<Device> {
+  async updateDevice(id: number, payload: { name: string; type: string; category: string; ports: DevicePort[] }): Promise<Device> {
     try {
       const apiDevice = await api.updateDevice(id, {
         name: payload.name,
         type: payload.type,
+        category: payload.category,
         ports: payload.ports.map(p => ({
           id: p.id || undefined,
           label: p.label,

@@ -104,6 +104,7 @@ export const strings = {
     addDevice: 'Add Device',
     portsCount: (count: number) => `${count} Ports`,
     typeLabel: 'Type',
+    categoryLabel: 'Category',
     idLabel: 'ID',
     portsConfig: 'Ports Configuration',
     linkedTo: (patchbayId: number) => `Linked to #${patchbayId}`,
@@ -121,6 +122,7 @@ export const strings = {
     nameLabel: 'Name',
     namePlaceholder: 'Device name',
     typePlaceholder: 'Select type',
+    subtypePlaceholder: 'Subtype (optional)',
     portsLabel: 'Ports',
     addPort: '+ Add Port',
     portNamePlaceholder: 'Port name',
@@ -160,7 +162,6 @@ export const strings = {
       Output: 'Output',
       Other: 'Other',
     },
-    deviceTypes: ['Preamp', 'Compressor', 'EQ', 'Interface', 'Console', 'Other'],
   },
   connections: {
     title: 'Connection Finder',

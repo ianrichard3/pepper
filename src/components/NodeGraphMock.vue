@@ -517,10 +517,48 @@ const handleFromEndpoint = (endpointType: 'device_port' | 'patchbay_point', endp
   return `pb-${endpointId}`
 }
 
-const pickConnectedStatus = (statuses: NodeCanvasConnectionsLookupStatus[]) => {
+const mergeConnectedStatuses = (statuses: NodeCanvasConnectionsLookupStatus[]) => {
   const connected = statuses.filter((item) => item.already_connected)
   if (connected.length === 0) return null
-  return connected.sort((a, b) => b.component_handles.length - a.component_handles.length)[0]
+
+  const handleSet = new Set<string>()
+  const edgeIdSet = new Set<number>()
+  const edgeById = new Map<number, NonNullable<NodeCanvasConnectionsLookupStatus['component_edges']>[number]>()
+  const fallbackEdges = new Map<string, NonNullable<NodeCanvasConnectionsLookupStatus['component_edges']>[number]>()
+
+  for (const status of connected) {
+    for (const handle of status.component_handles) {
+      handleSet.add(handle)
+    }
+    for (const edgeId of status.component_edge_ids) {
+      edgeIdSet.add(edgeId)
+    }
+    for (const edge of status.component_edges ?? []) {
+      if (typeof edge.id === 'number') {
+        edgeById.set(edge.id, edge)
+        continue
+      }
+      const a = handleFromEndpoint(edge.a_type, edge.a_id)
+      const b = handleFromEndpoint(edge.b_type, edge.b_id)
+      const key = [a, b].sort().join('::')
+      fallbackEdges.set(key, edge)
+    }
+  }
+
+  const mergedEdges = [
+    ...Array.from(edgeById.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map((item) => item[1]),
+    ...Array.from(fallbackEdges.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map((item) => item[1]),
+  ]
+
+  return {
+    component_handles: Array.from(handleSet).sort((a, b) => a.localeCompare(b)),
+    component_edge_ids: Array.from(edgeIdSet).sort((a, b) => a - b),
+    component_edges: mergedEdges,
+  }
 }
 
 const isNodeInRevealedChain = (node: GraphNode) => {
@@ -605,7 +643,7 @@ const lookupExistingComponentForNode = async (node: GraphNode) => {
 
   try {
     const response = await api.lookupNodeCanvasConnections({ handles })
-    const connected = pickConnectedStatus(response.statuses)
+    const connected = mergeConnectedStatuses(response.statuses)
     if (!connected) return
 
     existingComponentByNodeId.value = {
