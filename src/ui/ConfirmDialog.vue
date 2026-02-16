@@ -1,15 +1,39 @@
 <script setup lang="ts">
+import { reactive } from 'vue'
 import { strings } from './strings'
+import FloatingWindow from './FloatingWindow.vue'
 
 const t = strings
 
 defineProps<{ title: string; message: string; confirmLabel?: string; cancelLabel?: string }>()
 
 defineEmits<{ confirm: []; cancel: [] }>()
+
+const rect = reactive({
+  x: Math.max(20, Math.round((window.innerWidth - 420) / 2)),
+  y: Math.max(20, Math.round((window.innerHeight - 220) / 2)),
+  width: 420,
+  height: 220,
+})
 </script>
 
 <template>
-  <div class="confirm-overlay" role="dialog" aria-modal="true">
+  <FloatingWindow
+    title="Confirm"
+    :rect="rect"
+    state="normal"
+    :z-index="2600"
+    :min-width="360"
+    :min-height="200"
+    role="dialog"
+    aria-modal="true"
+    @focus="() => {}"
+    @close="$emit('cancel')"
+    @move="(next) => { rect.x = next.x; rect.y = next.y }"
+    @resize="(next) => { rect.x = next.x; rect.y = next.y; rect.width = next.width; rect.height = next.height }"
+    @toggle-minimize="() => {}"
+    @toggle-maximize="() => {}"
+  >
     <div class="confirm-card">
       <h3>{{ title }}</h3>
       <p>{{ message }}</p>
@@ -22,28 +46,14 @@ defineEmits<{ confirm: []; cancel: [] }>()
         </button>
       </div>
     </div>
-  </div>
+  </FloatingWindow>
 </template>
 
 <style scoped>
-.confirm-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(9, 8, 6, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2500;
-}
-
 .confirm-card {
-  background: var(--surface-2);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-3);
-  padding: var(--space-5);
-  max-width: 360px;
-  width: calc(100% - 40px);
-  box-shadow: var(--shadow-2);
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-2);
 }
 
 .confirm-card h3 {

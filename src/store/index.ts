@@ -60,6 +60,8 @@ interface DevicePatchbayLink {
   patchbayId: number
 }
 
+type FloatingWindowKey = 'devices' | `device:${number}`
+
 function toDevicePatchbayLink(edge: GraphEdge): DevicePatchbayLink | null {
   const a = edge.a
   const b = edge.b
@@ -159,6 +161,13 @@ export const store = reactive({
     b: null as null | { deviceId: number; portId: string },
   },
   toasts: [] as Toast[],
+  windowMode: 'legacy' as 'legacy' | 'floating',
+  floatingWindows: {
+    devices: false,
+    deviceDetails: [] as number[],
+    zOrder: [] as FloatingWindowKey[],
+  },
+  maxDeviceDetailWindows: 3,
   
   // Load data from API
   async loadData() {
@@ -385,6 +394,10 @@ export const store = reactive({
       a: null,
       b: null,
     }
+    this.windowMode = 'legacy'
+    this.floatingWindows.devices = false
+    this.floatingWindows.deviceDetails = []
+    this.floatingWindows.zOrder = []
     deviceImageCache.clearAll()
     console.log('[Store] State reset')
   },
@@ -392,6 +405,67 @@ export const store = reactive({
   // Actions
   setTab(tab: string) {
     this.activeTab = tab
+  },
+
+  setWindowMode(mode: 'legacy' | 'floating') {
+    this.windowMode = mode
+  },
+
+  focusWindow(windowKey: FloatingWindowKey) {
+    const index = this.floatingWindows.zOrder.indexOf(windowKey)
+    if (index !== -1) {
+      this.floatingWindows.zOrder.splice(index, 1)
+    }
+    this.floatingWindows.zOrder.push(windowKey)
+  },
+
+  openDevicesWindow() {
+    this.windowMode = 'floating'
+    this.floatingWindows.devices = true
+    this.focusWindow('devices')
+  },
+
+  closeDevicesWindow() {
+    this.floatingWindows.devices = false
+    this.floatingWindows.deviceDetails = []
+    this.floatingWindows.zOrder = this.floatingWindows.zOrder.filter((key) => key !== 'devices' && !key.startsWith('device:'))
+  },
+
+  isDeviceDetailWindowOpen(deviceId: number) {
+    return this.floatingWindows.deviceDetails.includes(deviceId)
+  },
+
+  openDeviceDetailWindow(deviceId: number) {
+    if (!this.floatingWindows.devices) {
+      this.openDevicesWindow()
+    }
+
+    const windowKey: FloatingWindowKey = `device:${deviceId}`
+    if (this.isDeviceDetailWindowOpen(deviceId)) {
+      this.focusWindow(windowKey)
+      return
+    }
+
+    if (this.floatingWindows.deviceDetails.length >= this.maxDeviceDetailWindows) {
+      const oldestDetailWindow = this.floatingWindows.zOrder.find((key) => key.startsWith('device:'))
+      if (oldestDetailWindow) {
+        const oldestId = Number(oldestDetailWindow.split(':')[1])
+        if (Number.isFinite(oldestId)) {
+          this.closeDeviceDetailWindow(oldestId)
+        }
+      } else {
+        this.floatingWindows.deviceDetails.shift()
+      }
+    }
+
+    this.floatingWindows.deviceDetails.push(deviceId)
+    this.focusWindow(windowKey)
+  },
+
+  closeDeviceDetailWindow(deviceId: number) {
+    this.floatingWindows.deviceDetails = this.floatingWindows.deviceDetails.filter(id => id !== deviceId)
+    const windowKey: FloatingWindowKey = `device:${deviceId}`
+    this.floatingWindows.zOrder = this.floatingWindows.zOrder.filter(key => key !== windowKey)
   },
 
   requestDeviceFocus(deviceId: number) {

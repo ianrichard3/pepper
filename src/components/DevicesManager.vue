@@ -9,6 +9,22 @@ import { store, type Device, type DevicePort } from '../store'
 import { strings } from '../ui/strings'
 import ConfirmDialog from '../ui/ConfirmDialog.vue'
 import { useDeviceImages } from '@/composables/useDeviceImages'
+import { windowManager } from '@/stores/windowManager'
+
+const props = withDefaults(defineProps<{
+  floatingMode?: boolean
+  onOpenDetailWindow?: (deviceId: number) => void
+  modalOnly?: boolean
+  modalMode?: 'add' | 'edit'
+  modalDeviceId?: number
+  modalParentWindowId?: string
+  onRequestCloseModalWindow?: () => void
+}>(), {
+  floatingMode: false,
+  modalOnly: false,
+  modalMode: 'add',
+  modalDeviceId: 0,
+})
 
 const t = strings
 const { orgId } = useAuth()
@@ -227,6 +243,10 @@ const removePort = (index: number) => {
 }
 
 const selectDevice = (device: Device) => {
+  if (props.floatingMode) {
+    props.onOpenDetailWindow?.(device.id)
+    return
+  }
   selectedDevice.value = device
 }
 
@@ -477,15 +497,40 @@ const closeAddModal = () => {
   } else {
     saveDraft()
   }
+  if (props.modalOnly) {
+    props.onRequestCloseModalWindow?.()
+  }
 }
 
 const openAddModal = () => {
+  if (props.floatingMode && !props.modalOnly) {
+    const parentId = props.modalParentWindowId || windowManager.getToolWindow('devices')?.id || 'tool:devices'
+    windowManager.openChildWindow(
+      parentId,
+      'devices-add-edit',
+      t.devices.addNewDevice,
+      { mode: 'add', parentWindowId: parentId },
+      { forceUnique: true },
+    )
+    return
+  }
   showAddModal.value = true
   void loadCatalogStatus()
   loadDraft()
 }
 
 const openEditModal = (device: Device) => {
+  if (props.floatingMode && !props.modalOnly) {
+    const parentId = props.modalParentWindowId || windowManager.getToolWindow('devices')?.id || 'tool:devices'
+    windowManager.openChildWindow(
+      parentId,
+      'devices-add-edit',
+      t.devices.editDevice,
+      { mode: 'edit', deviceId: device.id, parentWindowId: parentId },
+      { forceUnique: true },
+    )
+    return
+  }
   editingDeviceId.value = device.id
   editSnapshot.value = {
     device: {
@@ -602,6 +647,7 @@ watch(() => showAddModal.value, (open) => {
 })
 
 watch(() => store.activeTab, (tab) => {
+  if (props.floatingMode) return
   if (tab !== 'devices') {
     deviceImages.abortAll()
   }
@@ -782,6 +828,21 @@ const handleAddDevice = async () => {
 }
 
 const requestDeleteDevice = (device: Device) => {
+  if (props.floatingMode) {
+    const parentId = props.modalParentWindowId || windowManager.getToolWindow('devices')?.id || 'tool:devices'
+    windowManager.openChildWindow(
+      parentId,
+      'devices-delete-confirm',
+      t.confirm.deleteDeviceTitle,
+      {
+        deviceId: device.id,
+        deviceName: device.name,
+        sourceWindowId: props.modalOnly ? parentId : null,
+      },
+      { forceUnique: true },
+    )
+    return
+  }
   deleteTarget.value = device
 }
 
@@ -856,7 +917,13 @@ watch([newDevice, newPorts], () => {
 watch(() => store.focusDeviceId, (deviceId) => {
   if (!deviceId) return
   const device = store.devices.find((item) => item.id === deviceId)
-  if (device) selectedDevice.value = device
+  if (device) {
+    if (props.floatingMode) {
+      props.onOpenDetailWindow?.(device.id)
+    } else {
+      selectedDevice.value = device
+    }
+  }
   store.clearDeviceFocus()
 })
 
@@ -873,10 +940,23 @@ onBeforeUnmount(() => {
     URL.revokeObjectURL(pendingImagePreviewUrl.value)
   }
 })
+
+onMounted(() => {
+  if (!props.modalOnly) return
+  if (props.modalMode === 'edit' && props.modalDeviceId) {
+    const device = store.devices.find((item) => item.id === props.modalDeviceId)
+    if (device) {
+      openEditModal(device)
+      return
+    }
+  }
+  openAddModal()
+})
 </script>
 
 <template>
-  <div class="devices-container">
+  <div class="devices-container" :class="{ 'floating-mode': props.floatingMode, 'modal-only': props.modalOnly }">
+    <template v-if="!props.modalOnly">
     <div class="header">
       <div class="title-block">
         <h2>{{ t.devices.title }}</h2>
@@ -891,8 +971,9 @@ onBeforeUnmount(() => {
         <button class="add-btn" @click="openAddModal">{{ t.devices.addDevice }}</button>
       </div>
     </div>
+    </template>
 
-    <div class="devices-layout">
+    <div v-if="!props.modalOnly" class="devices-layout">
       <div class="devices-list">
         <div
           v-for="device in filteredDevices"
@@ -957,7 +1038,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div v-if="selectedDevice && isDesktop" class="device-detail-panel">
+      <div v-if="selectedDevice && isDesktop && !props.floatingMode" class="device-detail-panel">
         <div class="panel-header">
           <div class="panel-title">
             <h3>{{ selectedDevice.name }}</h3>
@@ -1051,7 +1132,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="selectedDevice && !isDesktop" class="modal-overlay" @click="closeDetail">
+    <div v-if="selectedDevice && !isDesktop && !props.floatingMode" class="modal-overlay" @click="closeDetail">
       <div class="modal-content" @click.stop>
         <div class="modal-header">
           <h2>{{ selectedDevice.name }}</h2>
@@ -1140,7 +1221,11 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="showAddModal" class="modal-overlay" @click="closeAddModal">
+    <div
+      v-if="showAddModal"
+      :class="props.modalOnly ? 'modal-inline-host' : 'modal-overlay'"
+      @click="!props.modalOnly && closeAddModal()"
+    >
       <div class="modal-content small add-device-modal" @click.stop>
         <div class="modal-header">
           <h2>{{ isEditing ? t.devices.editDevice : t.devices.addNewDevice }}</h2>
@@ -1351,7 +1436,7 @@ onBeforeUnmount(() => {
     </div>
 
     <ConfirmDialog
-      v-if="deleteTarget"
+      v-if="deleteTarget && !props.floatingMode"
       :title="t.confirm.deleteDeviceTitle"
       :message="t.confirm.deleteDeviceMessage(deleteTarget.name)"
       @confirm="confirmDeleteDevice"
@@ -1370,6 +1455,17 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-3);
   border: 1px solid var(--border-default);
   box-shadow: var(--shadow-1);
+}
+
+.devices-container.floating-mode {
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.devices-container.modal-only {
+  overflow: visible;
 }
 
 .header {
@@ -1643,6 +1739,12 @@ onBeforeUnmount(() => {
   justify-content: center;
   align-items: center;
   z-index: 1000;
+}
+
+.modal-inline-host {
+  position: relative;
+  display: block;
+  background: transparent;
 }
 
 .modal-content {

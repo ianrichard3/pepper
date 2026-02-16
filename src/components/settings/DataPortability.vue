@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { store } from '@/store'
+import { windowManager } from '@/stores/windowManager'
 import { strings } from '@/ui/strings'
 import { buildDateStamp, downloadJsonFile } from '@/lib/download'
 import { exportBundle, importApply, importPreview } from '@/services/portabilityApi'
@@ -15,6 +16,14 @@ import type {
 
 const t = strings
 const OPTIONS_STORAGE_KEY = 'pepper.portability.options.v1'
+
+const props = withDefaults(defineProps<{
+  floatingMode?: boolean
+  parentWindowId?: string
+}>(), {
+  floatingMode: false,
+  parentWindowId: '',
+})
 
 const exportScopes: Array<{ value: ExportScope; label: string; hint: string }> = [
   { value: 'ALL', label: 'All data', hint: 'Exports devices, patchbay, cables, and configurations.' },
@@ -440,6 +449,25 @@ async function executeApply() {
 
 async function onApplyImport() {
   if (importOptions.mode === 'replace' && replaceConfirmInput.value !== 'REPLACE') {
+    if (props.floatingMode) {
+      const parentId = props.parentWindowId || windowManager.getToolWindow('portability')?.id || 'tool:portability'
+      windowManager.openChildWindow(
+        parentId,
+        'portability-replace-confirm',
+        'Confirm replace mode',
+        {
+          requiredText: 'REPLACE',
+          onConfirm: (input: string) => {
+            replaceConfirmInput.value = input
+            if (input === 'REPLACE') {
+              void executeApply()
+            }
+          },
+        },
+        { id: `portability-replace-confirm:${parentId}` },
+      )
+      return
+    }
     showReplaceConfirm.value = true
     return
   }
@@ -742,7 +770,7 @@ function toTitleCase(value: string): string {
       </article>
     </div>
 
-    <div v-if="showReplaceConfirm" class="replace-overlay" role="dialog" aria-modal="true">
+    <div v-if="showReplaceConfirm && !props.floatingMode" class="replace-overlay" role="dialog" aria-modal="true">
       <div class="replace-card">
         <h3>Confirm replace mode</h3>
         <p>This operation can replace workspace data. Type <code>REPLACE</code> to continue.</p>

@@ -1,58 +1,119 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
+import type { WindowRect, WindowState } from '@/stores/windowManager'
 
-const props = withDefaults(defineProps<{
+const props = defineProps<{
   title: string
-  initialX?: number
-  initialY?: number
-  initialWidth?: number
-  initialMinimized?: boolean
-}>(), {
-  initialX: 32,
-  initialY: 96,
-  initialWidth: 320,
-  initialMinimized: false,
-})
-
-const emit = defineEmits<{
-  (e: 'close'): void
+  rect: WindowRect
+  state: WindowState
+  zIndex: number
+  minWidth?: number
+  minHeight?: number
 }>()
 
-const x = ref(props.initialX)
-const y = ref(props.initialY)
-const minimized = ref(props.initialMinimized)
+const emit = defineEmits<{
+  (e: 'focus'): void
+  (e: 'close'): void
+  (e: 'move', payload: { x: number; y: number }): void
+  (e: 'resize', payload: WindowRect): void
+  (e: 'toggle-minimize'): void
+  (e: 'toggle-maximize'): void
+}>()
 
-const dragging = ref<null | {
+const minWidth = computed(() => props.minWidth ?? 300)
+const minHeight = computed(() => props.minHeight ?? 180)
+
+const dragState = ref<null | {
   startX: number
   startY: number
   originX: number
   originY: number
 }>(null)
 
-const windowStyle = computed(() => ({
-  left: `${x.value}px`,
-  top: `${y.value}px`,
-  width: `${props.initialWidth}px`,
-}))
+const resizeState = ref<null | {
+  edge: string
+  startX: number
+  startY: number
+  origin: WindowRect
+}>(null)
+
+const styleObject = computed(() => {
+  if (props.state === 'maximized') {
+    return {
+      left: '8px',
+      top: '8px',
+      width: 'calc(100% - 16px)',
+      height: 'calc(100% - 16px)',
+      zIndex: props.zIndex,
+    }
+  }
+  const minimizedHeight = 42
+  return {
+    left: `${props.rect.x}px`,
+    top: `${props.rect.y}px`,
+    width: `${props.rect.width}px`,
+    height: `${props.state === 'minimized' ? minimizedHeight : props.rect.height}px`,
+    zIndex: props.zIndex,
+  }
+})
 
 const onHeaderPointerDown = (event: PointerEvent) => {
+  emit('focus')
+  if (props.state === 'maximized') return
   if ((event.target as HTMLElement | null)?.closest('.window-btn')) return
-  dragging.value = {
+  dragState.value = {
     startX: event.clientX,
     startY: event.clientY,
-    originX: x.value,
-    originY: y.value,
+    originX: props.rect.x,
+    originY: props.rect.y,
+  }
+}
+
+const onResizePointerDown = (edge: string, event: PointerEvent) => {
+  emit('focus')
+  if (props.state !== 'normal') return
+  event.stopPropagation()
+  resizeState.value = {
+    edge,
+    startX: event.clientX,
+    startY: event.clientY,
+    origin: { ...props.rect },
   }
 }
 
 const onPointerMove = (event: PointerEvent) => {
-  if (!dragging.value) return
-  x.value = Math.max(8, dragging.value.originX + event.clientX - dragging.value.startX)
-  y.value = Math.max(8, dragging.value.originY + event.clientY - dragging.value.startY)
+  if (dragState.value) {
+    const x = dragState.value.originX + event.clientX - dragState.value.startX
+    const y = dragState.value.originY + event.clientY - dragState.value.startY
+    emit('move', { x, y })
+    return
+  }
+
+  if (!resizeState.value) return
+  const { edge, origin, startX, startY } = resizeState.value
+  const deltaX = event.clientX - startX
+  const deltaY = event.clientY - startY
+
+  let next = { ...origin }
+  if (edge.includes('right')) next.width = Math.max(minWidth.value, origin.width + deltaX)
+  if (edge.includes('left')) {
+    const width = Math.max(minWidth.value, origin.width - deltaX)
+    next.x = origin.x + (origin.width - width)
+    next.width = width
+  }
+  if (edge.includes('bottom')) next.height = Math.max(minHeight.value, origin.height + deltaY)
+  if (edge.includes('top')) {
+    const height = Math.max(minHeight.value, origin.height - deltaY)
+    next.y = origin.y + (origin.height - height)
+    next.height = height
+  }
+
+  emit('resize', next)
 }
 
 const onPointerUp = () => {
-  dragging.value = null
+  dragState.value = null
+  resizeState.value = null
 }
 
 window.addEventListener('pointermove', onPointerMove)
@@ -65,35 +126,46 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="floating-window" :class="{ minimized }" :style="windowStyle">
-    <header class="floating-window-header" @pointerdown="onHeaderPointerDown">
+  <section class="floating-window" :style="styleObject" @pointerdown="emit('focus')">
+    <header class="floating-window-header" @pointerdown="onHeaderPointerDown" @dblclick="emit('toggle-maximize')">
       <strong>{{ title }}</strong>
       <div class="window-actions">
-        <button class="window-btn" type="button" @click="minimized = !minimized">{{ minimized ? '+' : '-' }}</button>
+        <button class="window-btn" type="button" @click="emit('toggle-minimize')">
+          {{ state === 'minimized' ? '+' : '-' }}
+        </button>
+        <button class="window-btn" type="button" @click="emit('toggle-maximize')">
+          {{ state === 'maximized' ? 'o' : '[]' }}
+        </button>
         <button class="window-btn" type="button" @click="emit('close')">x</button>
       </div>
     </header>
 
-    <div v-if="!minimized" class="floating-window-body">
+    <div v-if="state !== 'minimized'" class="floating-window-body">
       <slot />
     </div>
+
+    <template v-if="state === 'normal'">
+      <span class="resize-handle top" @pointerdown="onResizePointerDown('top', $event)" />
+      <span class="resize-handle right" @pointerdown="onResizePointerDown('right', $event)" />
+      <span class="resize-handle bottom" @pointerdown="onResizePointerDown('bottom', $event)" />
+      <span class="resize-handle left" @pointerdown="onResizePointerDown('left', $event)" />
+      <span class="resize-handle top-left" @pointerdown="onResizePointerDown('top-left', $event)" />
+      <span class="resize-handle top-right" @pointerdown="onResizePointerDown('top-right', $event)" />
+      <span class="resize-handle bottom-right" @pointerdown="onResizePointerDown('bottom-right', $event)" />
+      <span class="resize-handle bottom-left" @pointerdown="onResizePointerDown('bottom-left', $event)" />
+    </template>
   </section>
 </template>
 
 <style scoped>
 .floating-window {
-  position: fixed;
-  z-index: 1400;
+  position: absolute;
   border: 1px solid rgba(212, 154, 79, 0.45);
   border-radius: 12px;
   background: rgba(16, 14, 11, 0.96);
   box-shadow: 0 16px 42px rgba(0, 0, 0, 0.4);
   color: var(--text-primary);
   overflow: hidden;
-}
-
-.floating-window.minimized {
-  width: 260px !important;
 }
 
 .floating-window-header {
@@ -133,8 +205,77 @@ onBeforeUnmount(() => {
 }
 
 .floating-window-body {
+  height: calc(100% - 42px);
   padding: 10px;
-  max-height: 56vh;
   overflow: auto;
+}
+
+.resize-handle {
+  position: absolute;
+  background: transparent;
+}
+
+.resize-handle.top,
+.resize-handle.bottom {
+  height: 8px;
+  left: 8px;
+  right: 8px;
+  cursor: ns-resize;
+}
+
+.resize-handle.top {
+  top: -2px;
+}
+
+.resize-handle.bottom {
+  bottom: -2px;
+}
+
+.resize-handle.left,
+.resize-handle.right {
+  width: 8px;
+  top: 8px;
+  bottom: 8px;
+  cursor: ew-resize;
+}
+
+.resize-handle.left {
+  left: -2px;
+}
+
+.resize-handle.right {
+  right: -2px;
+}
+
+.resize-handle.top-left,
+.resize-handle.top-right,
+.resize-handle.bottom-right,
+.resize-handle.bottom-left {
+  width: 12px;
+  height: 12px;
+}
+
+.resize-handle.top-left {
+  top: -2px;
+  left: -2px;
+  cursor: nwse-resize;
+}
+
+.resize-handle.top-right {
+  top: -2px;
+  right: -2px;
+  cursor: nesw-resize;
+}
+
+.resize-handle.bottom-right {
+  bottom: -2px;
+  right: -2px;
+  cursor: nwse-resize;
+}
+
+.resize-handle.bottom-left {
+  bottom: -2px;
+  left: -2px;
+  cursor: nesw-resize;
 }
 </style>

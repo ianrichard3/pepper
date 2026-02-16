@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useNodeCanvasPersistence } from '@/composables/useNodeCanvasPersistence'
 import { api, type NodeCanvasConnectionsLookupStatus } from '@/lib/api'
+import { windowManager } from '@/stores/windowManager'
 import {
   fromPersistedState,
   toPersistedState,
@@ -11,6 +12,14 @@ import {
   type NodeGraphPort as NodePort,
 } from '@/features/nodeCanvas/model'
 import { store } from '@/store'
+
+const props = withDefaults(defineProps<{
+  floatingMode?: boolean
+  parentWindowId?: string
+}>(), {
+  floatingMode: false,
+  parentWindowId: '',
+})
 
 interface DragState {
   nodeIds: string[];
@@ -123,6 +132,18 @@ const existingComponentByNodeId = ref<Record<string, ExistingComponentInfo>>({})
 const revealedChainHandles = ref<string[]>([])
 const revealedChainEdgeIds = ref<number[]>([])
 const connectedNoticeNodeId = ref<string | null>(null)
+
+const graphParentWindowId = computed(() => {
+  return props.parentWindowId || windowManager.getToolWindow('graph')?.id || 'tool:graph'
+})
+
+const closeFloatingConnectWindows = () => {
+  for (const item of [...windowManager.windows]) {
+    if (item.kind === 'graph-connect-node' && item.parentId === graphParentWindowId.value) {
+      windowManager.closeWindow(item.id)
+    }
+  }
+}
 
 const nodeMap = computed(() => {
   return new Map(nodes.value.map((node) => [node.id, node]))
@@ -898,8 +919,28 @@ const onNodePointerDown = (event: PointerEvent, node: GraphNode) => {
   if (cableDraft.value) {
     selectSingleNode(node.id)
     if (cableDraft.value.fromNodeId === node.id) return
-    connectTargetNodeId.value = node.id
-    showConnectModal.value = true
+    if (props.floatingMode) {
+      windowManager.openChildWindow(
+        graphParentWindowId.value,
+        'graph-connect-node',
+        `Connect to ${node.title}`,
+        {
+          nodeId: node.id,
+          nodeTitle: node.title,
+          ports: node.ports.map((port) => ({
+            id: port.id,
+            name: port.name,
+            statusLabel: getPortConnectionLabel(node.id, port.id),
+            occupied: isTargetPortOccupied(node.id, port.id),
+          })),
+          onSelectPort: (portId: string) => connectDraftToTargetPort(portId),
+        },
+        { id: `graph-connect-node:${graphParentWindowId.value}:${node.id}` },
+      )
+    } else {
+      connectTargetNodeId.value = node.id
+      showConnectModal.value = true
+    }
     return
   }
 
@@ -1082,6 +1123,9 @@ const cancelCableDraft = () => {
   cableDraft.value = null
   showConnectModal.value = false
   connectTargetNodeId.value = null
+  if (props.floatingMode) {
+    closeFloatingConnectWindows()
+  }
 }
 
 const beginCableFromPort = (nodeId: string, portId: string) => {
@@ -1212,6 +1256,21 @@ const closePinnedTooltip = () => {
 }
 
 const openAddModal = () => {
+  if (props.floatingMode) {
+    windowManager.openChildWindow(
+      graphParentWindowId.value,
+      'graph-add-node',
+      'Add Node',
+      {
+        initialTab: 'devices',
+        onSelectTemplate: (item: NodeTemplate) => {
+          void addNodeFromTemplate(item)
+        },
+      },
+      { id: `graph-add-node:${graphParentWindowId.value}` },
+    )
+    return
+  }
   showAddModal.value = true
   catalogTab.value = 'devices'
   addSearchQuery.value = ''
@@ -1256,7 +1315,9 @@ const addNodeFromTemplate = async (item: NodeTemplate) => {
   nodes.value.push(createdNode)
 
   selectSingleNode(id)
-  closeAddModal()
+  if (!props.floatingMode) {
+    closeAddModal()
+  }
   scheduleStateSave()
   await lookupExistingComponentForNode(createdNode)
 }
@@ -1547,7 +1608,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="showAddModal" class="modal-overlay" @click="closeAddModal">
+    <div v-if="showAddModal && !props.floatingMode" class="modal-overlay" @click="closeAddModal">
       <div class="add-modal" @click.stop>
         <header class="add-modal-header">
           <h3>Add Node</h3>
@@ -1581,7 +1642,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="showConnectModal && activeConnectTargetNode" class="modal-overlay" @click="closeConnectModal">
+    <div v-if="showConnectModal && activeConnectTargetNode && !props.floatingMode" class="modal-overlay" @click="closeConnectModal">
       <div class="connect-modal" @click.stop>
         <header class="add-modal-header">
           <h3>Connect to {{ activeConnectTargetNode.title }}</h3>

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, watchEffect, watch } from 'vue'
+import { computed, watchEffect, watch, ref, onMounted, onBeforeUnmount } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { SignedIn, SignedOut, UserButton, OrganizationSwitcher, useAuth, useClerk } from '@clerk/vue'
 import { registerTokenGetter } from './lib/authToken'
 import { useAuthz } from './lib/authz'
 import { useEntitlements } from './lib/useEntitlements'
 import { quotaStore } from './stores/quota'
+import { windowManager, type ManagedWindow, type ToolWindowKind } from './stores/windowManager'
 import PatchBayGrid from './components/PatchBayGrid.vue'
 import DevicesManager from './components/DevicesManager.vue'
 import NodeGraphMock from './components/NodeGraphMock.vue'
@@ -14,7 +15,17 @@ import AuthDiagnosticsPanel from './components/AuthDiagnosticsPanel.vue'
 import AccessDisabledScreen from './components/AccessDisabledScreen.vue'
 import AdminAccessPanel from './components/admin/AdminAccessPanel.vue'
 import DataPortability from './components/settings/DataPortability.vue'
+import DeviceDetailWindow from './components/DeviceDetailWindow.vue'
+import DevicesAddEditWindow from './components/DevicesAddEditWindow.vue'
+import DevicesDeleteConfirmWindow from './components/DevicesDeleteConfirmWindow.vue'
+import GraphAddNodeWindow from './components/GraphAddNodeWindow.vue'
+import GraphConnectWindow from './components/GraphConnectWindow.vue'
+import PatchbayPointDetailWindow from './components/PatchbayPointDetailWindow.vue'
+import PatchbayLinkSearchWindow from './components/PatchbayLinkSearchWindow.vue'
+import PatchbayOverwriteConfirmWindow from './components/PatchbayOverwriteConfirmWindow.vue'
+import PortabilityReplaceConfirmWindow from './components/PortabilityReplaceConfirmWindow.vue'
 import ToastHost from './ui/ToastHost.vue'
+import FloatingWindow from './ui/FloatingWindow.vue'
 import { strings } from './ui/strings'
 import { store } from './store'
 import logoUrl from './assets/el-riche-mark.svg'
@@ -37,89 +48,16 @@ const {
 const { hasAppAccess, canExport } = useEntitlements()
 const isDev = import.meta.env.DEV
 const showAuthDiagnostics = isDev && new URLSearchParams(window.location.search).has('authdiag')
+const isDesktop = ref(window.innerWidth >= 1024)
+const canvasStageRef = ref<HTMLElement | null>(null)
+let stageObserver: ResizeObserver | null = null
 
-// orgLoaded se considera true cuando el usuario no está autenticado
-// o cuando Clerk está completamente cargado
-const orgLoaded = computed(() => {
-  return !isSignedIn.value || isLoaded.value
-})
-
-const needsOrganization = computed(() => {
-  return isSignedIn.value && (!orgId.value || store.orgRequired)
-})
-
-// Registrar la función getToken para que api.ts pueda usarla
-watchEffect(() => {
-  if (isLoaded.value && isSignedIn.value && getToken) {
-    // getToken es un ComputedRef, necesitamos extraer su función
-    const tokenFn = getToken.value
-    if (tokenFn) {
-      registerTokenGetter(tokenFn)
-    }
-  }
-})
-
-// Resetear el store cuando el usuario se desloguea o cambia de org
-watch([isSignedIn, orgId], ([newSignedIn, newOrgId], [oldSignedIn, oldOrgId]) => {
-  // Si el usuario se deslogueó, resetear todo
-  if (oldSignedIn && !newSignedIn) {
-    console.log('[App] User signed out, resetting store')
-    store.resetState()
-    resetAuthContext()
-    quotaStore.reset()
-  }
-  
-  // Si cambió la org, resetear para cargar datos de la nueva org
-  if (newSignedIn && oldOrgId && newOrgId && oldOrgId !== newOrgId) {
-    console.log('[App] Organization changed, resetting store')
-    store.resetState()
-    resetAuthContext()
-    quotaStore.reset()
-  }
-
-  if (newSignedIn && newOrgId && (!oldSignedIn || oldOrgId !== newOrgId)) {
-    void loadAuthContext({ force: true }).catch(() => {})
-  }
-})
-
-// Cargar datos cuando el usuario esté autenticado, tenga org activa y Clerk esté listo
-watchEffect(() => {
-  if (!isLoaded.value || !orgLoaded.value) return
-  
-  const userSignedIn = isSignedIn.value
-  const hasOrg = !!orgId.value
-  
-  if (userSignedIn && hasOrg) {
-    // Usuario autenticado con org activa
-    // Solo cargar si no se han cargado datos aún y no hay error de auth
-    const authReady =
-      authContextLoaded.value ||
-      authContextError.value === 'AUTH_CONTEXT_UNSUPPORTED' ||
-      Boolean(authContextError.value)
-    if (authReady && hasAppAccess.value && !store.hasLoadedInitialData && !store.loading && !store.authError) {
-      console.log('[App] Loading initial data...')
-      store.loadData()
-    }
-    void loadAuthContext().catch(() => {})
-  } else if (userSignedIn && !hasOrg) {
-    // Usuario autenticado pero sin org activa (la UI lo maneja)
-  }
-})
-
-watch(() => authContext.value, (context) => {
-  quotaStore.updateFromAuthContext(context)
-}, { immediate: true })
-
-// Desloguear al usuario cuando hay error AUTH_EXPIRED
-watchEffect(() => {
-  if (store.authError && store.error?.includes('expirada')) {
-    console.log('[App] Auth expired, signing out user...')
-    // Dar tiempo para que el usuario vea el mensaje de error
-    setTimeout(() => {
-      clerk.value?.signOut()
-    }, 2000)
-  }
-})
+const orgLoaded = computed(() => !isSignedIn.value || isLoaded.value)
+const needsOrganization = computed(() => isSignedIn.value && (!orgId.value || store.orgRequired))
+const isAdminRoute = computed(() => route.path === '/admin/access')
+const isPortabilityRoute = computed(() => route.path === '/settings/portability')
+const canAccessAdmin = computed(() => isAdminRole(role.value))
+const desktopCanvasEnabled = computed(() => isDesktop.value)
 
 const statusLabel = computed(() => {
   if (store.loading) return t.app.syncing
@@ -131,45 +69,301 @@ const showAuthContextBanner = computed(() => {
   return authContextError.value && authContextError.value !== 'AUTH_CONTEXT_UNSUPPORTED'
 })
 
-const notifyComingSoon = () => {
-  store.pushToast({ type: 'info', message: t.app.comingSoon })
+const toolDefinitions = computed(() => {
+  const base: Array<{ id: ToolWindowKind; label: string; icon: string; route: string | null; hidden?: boolean }> = [
+    { id: 'patchbay', label: t.nav.patchbay, icon: 'PB', route: null },
+    { id: 'devices', label: t.nav.devices, icon: 'DV', route: null },
+    { id: 'graph', label: t.nav.nodeView, icon: 'GR', route: null },
+    { id: 'portability', label: t.nav.portability, icon: 'EX', route: '/settings/portability' },
+    { id: 'admin', label: 'Admin', icon: 'AD', route: '/admin/access', hidden: !canAccessAdmin.value },
+  ]
+  return base.filter((tool) => !tool.hidden)
+})
+
+const desktopWindows = computed(() => {
+  return [...windowManager.windows].sort((a, b) => a.zIndex - b.zIndex)
+})
+
+const dockWindows = computed(() => {
+  return [...windowManager.windows].sort((a, b) => b.updatedAt - a.updatedAt)
+})
+
+const activeToolKinds = computed(() => {
+  const set = new Set<ToolWindowKind>()
+  for (const window of windowManager.windows) {
+    if (window.kind === 'patchbay' || window.kind === 'devices' || window.kind === 'graph' || window.kind === 'portability' || window.kind === 'admin') {
+      set.add(window.kind)
+    }
+  }
+  return set
+})
+
+const updateViewport = () => {
+  isDesktop.value = window.innerWidth >= 1024
+  updateCanvasViewport()
 }
 
-const isAdminRoute = computed(() => route.path === '/admin/access')
-const isPortabilityRoute = computed(() => route.path === '/settings/portability')
-const canAccessAdmin = computed(() => isAdminRole(role.value))
+const updateCanvasViewport = () => {
+  if (!desktopCanvasEnabled.value) return
+  const stage = canvasStageRef.value
+  if (!stage) {
+    windowManager.setViewport(window.innerWidth - 200, window.innerHeight - 200)
+    return
+  }
+  const rect = stage.getBoundingClientRect()
+  windowManager.setViewport(Math.round(rect.width), Math.round(rect.height))
+}
 
-const goToTab = (tab: 'patchbay' | 'devices' | 'nodeView') => {
-  store.setTab(tab)
-  if (route.path !== '/') {
+const syncScope = () => {
+  if (!desktopCanvasEnabled.value) return
+  const scope = `${orgId.value || 'no-org'}:desktop`
+  windowManager.setScope(scope)
+  updateCanvasViewport()
+}
+
+watchEffect(() => {
+  if (isLoaded.value && isSignedIn.value && getToken) {
+    const tokenFn = getToken.value
+    if (tokenFn) registerTokenGetter(tokenFn)
+  }
+})
+
+watch([isSignedIn, orgId], ([newSignedIn, newOrgId], [oldSignedIn, oldOrgId]) => {
+  if (oldSignedIn && !newSignedIn) {
+    store.resetState()
+    resetAuthContext()
+    quotaStore.reset()
+    windowManager.clearAll()
+  }
+
+  if (newSignedIn && oldOrgId && newOrgId && oldOrgId !== newOrgId) {
+    store.resetState()
+    resetAuthContext()
+    quotaStore.reset()
+    windowManager.clearAll()
+  }
+
+  if (newSignedIn && newOrgId && (!oldSignedIn || oldOrgId !== newOrgId)) {
+    void loadAuthContext({ force: true }).catch(() => {})
+  }
+})
+
+watchEffect(() => {
+  if (!isLoaded.value || !orgLoaded.value) return
+  const userSignedIn = isSignedIn.value
+  const hasOrg = !!orgId.value
+
+  if (userSignedIn && hasOrg) {
+    const authReady =
+      authContextLoaded.value ||
+      authContextError.value === 'AUTH_CONTEXT_UNSUPPORTED' ||
+      Boolean(authContextError.value)
+    if (authReady && hasAppAccess.value && !store.hasLoadedInitialData && !store.loading && !store.authError) {
+      store.loadData()
+    }
+    void loadAuthContext().catch(() => {})
+  }
+})
+
+watch(() => authContext.value, (context) => {
+  quotaStore.updateFromAuthContext(context)
+}, { immediate: true })
+
+watchEffect(() => {
+  if (store.authError && store.error?.includes('expirada')) {
+    setTimeout(() => {
+      clerk.value?.signOut()
+    }, 2000)
+  }
+})
+
+watch([orgId, isDesktop], () => {
+  syncScope()
+}, { immediate: true })
+
+watch(canAccessAdmin, (allowed) => {
+  if (allowed) return
+  windowManager.closeTool('admin')
+  if (route.path === '/admin/access') {
+    void router.push('/')
+  }
+})
+
+watch(() => route.path, (path) => {
+  if (!desktopCanvasEnabled.value) return
+  if (path === '/settings/portability') {
+    windowManager.openTool('portability', t.nav.portability)
+    return
+  }
+  if (path === '/admin/access' && canAccessAdmin.value) {
+    windowManager.openTool('admin', 'Admin')
+    return
+  }
+}, { immediate: true })
+
+watch(() => store.focusDeviceId, (deviceId) => {
+  if (!deviceId || !desktopCanvasEnabled.value) return
+  const device = store.devices.find((item) => item.id === deviceId)
+  const parent = windowManager.getToolWindow('devices')
+  windowManager.openDeviceDetail(deviceId, device?.name || `Device #${deviceId}`, parent?.id || null)
+  store.clearDeviceFocus()
+})
+
+watch(() => store.activeTab, (tab) => {
+  if (!desktopCanvasEnabled.value) return
+  if (tab === 'patchbay') windowManager.openTool('patchbay', t.nav.patchbay)
+  if (tab === 'devices') windowManager.openTool('devices', t.nav.devices)
+  if (tab === 'nodeView') windowManager.openTool('graph', t.nav.nodeView)
+})
+
+const openTool = (kind: ToolWindowKind) => {
+  if (!desktopCanvasEnabled.value) {
+    if (kind === 'portability') {
+      void router.push('/settings/portability')
+      return
+    }
+    if (kind === 'admin') {
+      if (!canAccessAdmin.value) return
+      void router.push('/admin/access')
+      return
+    }
+    if (kind === 'patchbay') store.setTab('patchbay')
+    if (kind === 'devices') store.setTab('devices')
+    if (kind === 'graph') store.setTab('nodeView')
+    if (route.path !== '/') void router.push('/')
+    return
+  }
+
+  const def = toolDefinitions.value.find((item) => item.id === kind)
+  if (!def) return
+  windowManager.openTool(kind, def.label)
+
+  if (def.route) {
+    if (route.path !== def.route) void router.push(def.route)
+  } else if (route.path !== '/') {
     void router.push('/')
   }
 }
 
-const goToAdmin = () => {
-  if (!canAccessAdmin.value) return
-  void router.push('/admin/access')
+const openDeviceDetailWindow = (deviceId: number) => {
+  const device = store.devices.find((item) => item.id === deviceId)
+  const parent = windowManager.getToolWindow('devices')
+  windowManager.openDeviceDetail(deviceId, device?.name || `Device #${deviceId}`, parent?.id || null)
 }
 
-const goToPortability = () => {
-  void router.push('/settings/portability')
+const closeWindow = (window: ManagedWindow) => {
+  windowManager.closeWindow(window.id)
+  if (window.kind === 'portability' && route.path === '/settings/portability') {
+    void router.push('/')
+  }
+  if (window.kind === 'admin' && route.path === '/admin/access') {
+    void router.push('/')
+  }
 }
+
+const handleDockClick = (window: ManagedWindow) => {
+  if (window.state === 'minimized') {
+    windowManager.restoreWindow(window.id)
+  }
+  windowManager.focusWindow(window.id)
+}
+
+const toggleMinimize = (window: ManagedWindow) => {
+  if (window.state === 'minimized') {
+    windowManager.restoreWindow(window.id)
+    windowManager.focusWindow(window.id)
+    return
+  }
+  windowManager.minimizeWindow(window.id)
+}
+
+const toggleMaximize = (window: ManagedWindow) => {
+  windowManager.maximizeWindow(window.id)
+}
+
+const windowComponentKey = (window: ManagedWindow) => {
+  if (window.kind === 'patchbay') return 'patchbay'
+  if (window.kind === 'devices') return 'devices'
+  if (window.kind === 'graph') return 'graph'
+  if (window.kind === 'portability') return 'portability'
+  if (window.kind === 'admin') return 'admin'
+  if (window.kind === 'device-detail') return 'device-detail'
+  if (window.kind === 'patchbay-point-detail') return 'patchbay-point-detail'
+  if (window.kind === 'patchbay-link-search') return 'patchbay-link-search'
+  if (window.kind === 'patchbay-overwrite-confirm') return 'patchbay-overwrite-confirm'
+  if (window.kind === 'devices-add-edit') return 'devices-add-edit'
+  if (window.kind === 'devices-delete-confirm') return 'devices-delete-confirm'
+  if (window.kind === 'graph-add-node') return 'graph-add-node'
+  if (window.kind === 'graph-connect-node') return 'graph-connect-node'
+  if (window.kind === 'portability-replace-confirm') return 'portability-replace-confirm'
+  return 'unknown'
+}
+
+const payloadFunction = <T extends (...args: any[]) => unknown>(window: ManagedWindow, key: string): T | undefined => {
+  const candidate = window.payload[key]
+  if (typeof candidate !== 'function') return undefined
+  return candidate as T
+}
+
+const graphConnectPorts = (window: ManagedWindow) => {
+  const source = window.payload.ports
+  if (!Array.isArray(source)) return [] as Array<{ id: string; name: string; statusLabel: string; occupied: boolean }>
+  return source
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null
+      const row = item as Record<string, unknown>
+      if (typeof row.id !== 'string' || typeof row.name !== 'string') return null
+      return {
+        id: row.id,
+        name: row.name,
+        statusLabel: typeof row.statusLabel === 'string' ? row.statusLabel : '',
+        occupied: Boolean(row.occupied),
+      }
+    })
+    .filter((item): item is { id: string; name: string; statusLabel: string; occupied: boolean } => item !== null)
+}
+
+const graphSelectTemplateHandler = (window: ManagedWindow) => {
+  return payloadFunction<(template: unknown) => void>(window, 'onSelectTemplate')
+}
+
+const graphSelectPortHandler = (window: ManagedWindow) => {
+  return payloadFunction<(portId: string) => void>(window, 'onSelectPort')
+}
+
+const portabilityConfirmHandler = (window: ManagedWindow) => {
+  return payloadFunction<(input: string) => void>(window, 'onConfirm')
+}
+
+const notifyComingSoon = () => {
+  store.pushToast({ type: 'info', message: t.app.comingSoon })
+}
+
+onMounted(() => {
+  window.addEventListener('resize', updateViewport)
+  if (typeof ResizeObserver !== 'undefined') {
+    stageObserver = new ResizeObserver(() => updateCanvasViewport())
+    if (canvasStageRef.value) stageObserver.observe(canvasStageRef.value)
+  }
+  syncScope()
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', updateViewport)
+  if (stageObserver) stageObserver.disconnect()
+})
 </script>
 
 <template>
-  <!-- Loading state while Clerk initializes -->
   <div v-if="!isLoaded || !orgLoaded" class="auth-loading">
     <div class="loading-card">Cargando...</div>
   </div>
 
-  <!-- Signed out: show login screen -->
   <SignedOut>
     <AuthScreen />
   </SignedOut>
 
-  <!-- Signed in: show app or org selector -->
   <SignedIn>
-    <!-- Organization Required Screen -->
     <div v-if="needsOrganization" class="org-required-screen">
       <div class="org-required-container">
         <div class="org-required-header">
@@ -179,9 +373,9 @@ const goToPortability = () => {
             Para continuar, necesitás seleccionar o crear un workspace (organización)
           </p>
         </div>
-        
+
         <div class="org-switcher-wrapper">
-          <OrganizationSwitcher 
+          <OrganizationSwitcher
             :appearance="{
               elements: {
                 rootBox: 'org-switcher-root',
@@ -190,19 +384,9 @@ const goToPortability = () => {
             }"
           />
         </div>
-
-        <div class="org-help">
-          <p class="help-text">
-            💡 <strong>¿Qué es un workspace?</strong><br>
-            Un workspace es tu espacio de trabajo donde se guardan todos tus dispositivos,
-            conexiones y configuración del patchbay. Podés tener múltiples workspaces
-            y cambiar entre ellos cuando quieras.
-          </p>
-        </div>
       </div>
     </div>
 
-    <!-- Main App (only when org is active) -->
     <div v-else class="app-container">
       <div v-if="showAuthContextBanner" class="auth-context-banner">
         <strong>{{ t.app.syncIssue }}</strong>
@@ -224,93 +408,187 @@ const goToPortability = () => {
           <div class="loading-card">{{ t.app.loadingData }}</div>
         </div>
 
-        <header class="topbar">
-          <div class="brand">
-            <img class="brand-mark" :src="logoUrl" alt="" />
-            <div class="brand-text">
-              <span class="brand-title">{{ t.app.name }}</span>
-              <span class="brand-subtitle">{{ t.app.tagline }}</span>
+        <div v-if="desktopCanvasEnabled" class="workspace-shell">
+          <aside class="tool-rail">
+            <div class="rail-brand">
+              <img class="rail-logo" :src="logoUrl" alt="" />
+              <span>Pepper</span>
             </div>
-          </div>
 
-          <div class="topbar-center">
-            <div class="status-chip" :class="{ loading: store.loading, error: store.error }">
-              <span class="status-dot"></span>
-              <span class="status-text">{{ statusLabel }}</span>
-            </div>
-            <div class="topbar-actions">
+            <nav class="tool-list">
               <button
-                class="ghost-btn"
-                :disabled="!canExport"
-                :title="!canExport ? t.app.exportDisabled : ''"
-                @click="goToPortability"
+                v-for="tool in toolDefinitions"
+                :key="tool.id"
+                class="tool-btn"
+                :class="{ active: activeToolKinds.has(tool.id) }"
+                @click="openTool(tool.id)"
               >
-                {{ t.app.export }}
-              </button>
-              <button class="ghost-btn" @click="notifyComingSoon">{{ t.app.help }}</button>
-              <button class="ghost-btn" @click="notifyComingSoon">{{ t.app.shortcuts }}</button>
-            </div>
-          </div>
-
-          <div class="topbar-right">
-            <nav class="main-nav">
-              <button
-                :class="{ active: !isAdminRoute && !isPortabilityRoute && store.activeTab === 'patchbay' }"
-                @click="goToTab('patchbay')"
-              >
-                {{ t.nav.patchbay }}
-              </button>
-              <button
-                :class="{ active: !isAdminRoute && !isPortabilityRoute && store.activeTab === 'devices' }"
-                @click="goToTab('devices')"
-              >
-                {{ t.nav.devices }}
-              </button>
-              <button
-                :class="{ active: !isAdminRoute && !isPortabilityRoute && store.activeTab === 'nodeView' }"
-                @click="goToTab('nodeView')"
-              >
-                {{ t.nav.nodeView }}
-              </button>
-              <button :class="{ active: isPortabilityRoute }" @click="goToPortability">
-                {{ t.nav.portability }}
-              </button>
-              <button
-                v-if="canAccessAdmin"
-                :class="{ active: isAdminRoute }"
-                @click="goToAdmin"
-              >
-                Admin
+                <span class="tool-icon">{{ tool.icon }}</span>
+                <span class="tool-label">{{ tool.label }}</span>
               </button>
             </nav>
-            <div class="user-menu">
-              <UserButton />
-            </div>
-          </div>
-        </header>
 
-        <main class="content-area">
-          <template v-if="isAdminRoute">
-            <div v-if="canAccessAdmin" class="admin-content">
-              <AdminAccessPanel />
+            <div class="rail-footer">
+              <div class="status-chip" :class="{ loading: store.loading, error: store.error }">
+                <span class="status-dot"></span>
+                <span>{{ statusLabel }}</span>
+              </div>
+              <button class="ghost-btn" :disabled="!canExport" @click="openTool('portability')">{{ t.app.export }}</button>
+              <button class="ghost-btn" @click="notifyComingSoon">{{ t.app.help }}</button>
+              <div class="rail-user"><UserButton /></div>
             </div>
-            <div v-else class="not-authorized">
-              <h2>Not authorized</h2>
-              <p>You must be an organization admin to access this section.</p>
+          </aside>
+
+          <section class="canvas-shell">
+            <div ref="canvasStageRef" class="canvas-stage no-select-canvas">
+              <FloatingWindow
+                v-for="window in desktopWindows"
+                :key="window.id"
+                :title="window.title"
+                :rect="window.rect"
+                :state="window.state"
+                :z-index="window.zIndex"
+                @focus="windowManager.focusWindow(window.id)"
+                @close="closeWindow(window)"
+                @move="({ x, y }) => windowManager.moveWindow(window.id, x, y)"
+                @resize="(rect) => windowManager.resizeWindow(window.id, rect)"
+                @toggle-minimize="toggleMinimize(window)"
+                @toggle-maximize="toggleMaximize(window)"
+              >
+                <PatchBayGrid v-if="windowComponentKey(window) === 'patchbay'" />
+                <DevicesManager
+                  v-else-if="windowComponentKey(window) === 'devices'"
+                  floating-mode
+                  :modal-parent-window-id="window.id"
+                  :on-open-detail-window="openDeviceDetailWindow"
+                />
+                <NodeGraphMock
+                  v-else-if="windowComponentKey(window) === 'graph'"
+                  floating-mode
+                  :parent-window-id="window.id"
+                />
+                <DataPortability
+                  v-else-if="windowComponentKey(window) === 'portability'"
+                  floating-mode
+                  :parent-window-id="window.id"
+                />
+                <AdminAccessPanel v-else-if="windowComponentKey(window) === 'admin'" />
+                <DeviceDetailWindow
+                  v-else-if="windowComponentKey(window) === 'device-detail'"
+                  :device-id="Number(window.payload.deviceId || 0)"
+                  @close="closeWindow(window)"
+                />
+                <PatchbayPointDetailWindow
+                  v-else-if="windowComponentKey(window) === 'patchbay-point-detail'"
+                  :patchbay-id="Number(window.payload.patchbayId || 0)"
+                  :parent-window-id="String(window.payload.parentWindowId || 'tool:patchbay')"
+                  @close="closeWindow(window)"
+                />
+                <PatchbayLinkSearchWindow
+                  v-else-if="windowComponentKey(window) === 'patchbay-link-search'"
+                  :patchbay-id="Number(window.payload.patchbayId || 0)"
+                  @close="closeWindow(window)"
+                />
+                <PatchbayOverwriteConfirmWindow
+                  v-else-if="windowComponentKey(window) === 'patchbay-overwrite-confirm'"
+                  :patchbay-id="Number(window.payload.patchbayId || 0)"
+                  :device-name="String(window.payload.deviceName || '')"
+                  :port-label="String(window.payload.portLabel || '')"
+                  @close="closeWindow(window)"
+                />
+                <DevicesAddEditWindow
+                  v-else-if="windowComponentKey(window) === 'devices-add-edit'"
+                  :mode="String(window.payload.mode || 'add') === 'edit' ? 'edit' : 'add'"
+                  :device-id="Number(window.payload.deviceId || 0)"
+                  :parent-window-id="String(window.payload.parentWindowId || window.parentId || 'tool:devices')"
+                  @close="closeWindow(window)"
+                />
+                <DevicesDeleteConfirmWindow
+                  v-else-if="windowComponentKey(window) === 'devices-delete-confirm'"
+                  :device-id="Number(window.payload.deviceId || 0)"
+                  :device-name="String(window.payload.deviceName || '')"
+                  :source-window-id="String(window.payload.sourceWindowId || '') || undefined"
+                  @close="closeWindow(window)"
+                />
+                <GraphAddNodeWindow
+                  v-else-if="windowComponentKey(window) === 'graph-add-node'"
+                  :initial-tab="String(window.payload.initialTab || 'devices') === 'patchbay' ? 'patchbay' : 'devices'"
+                  :on-select-template="graphSelectTemplateHandler(window)"
+                  @close="closeWindow(window)"
+                />
+                <GraphConnectWindow
+                  v-else-if="windowComponentKey(window) === 'graph-connect-node'"
+                  :node-title="String(window.payload.nodeTitle || '')"
+                  :ports="graphConnectPorts(window)"
+                  :on-select-port="graphSelectPortHandler(window)"
+                  @close="closeWindow(window)"
+                />
+                <PortabilityReplaceConfirmWindow
+                  v-else-if="windowComponentKey(window) === 'portability-replace-confirm'"
+                  :required-text="String(window.payload.requiredText || 'REPLACE')"
+                  :on-confirm="portabilityConfirmHandler(window)"
+                  @close="closeWindow(window)"
+                />
+              </FloatingWindow>
             </div>
-          </template>
-          <template v-else-if="isPortabilityRoute">
-            <DataPortability />
-          </template>
-          <template v-else>
-            <PatchBayGrid v-if="store.activeTab === 'patchbay'" />
-            <DevicesManager v-if="store.activeTab === 'devices'" />
-            <NodeGraphMock v-if="store.activeTab === 'nodeView'" />
-          </template>
-        </main>
+
+            <footer class="window-dock">
+              <button
+                v-for="window in dockWindows"
+                :key="`dock-${window.id}`"
+                class="dock-item"
+                :class="{ minimized: window.state === 'minimized' }"
+                @click="handleDockClick(window)"
+              >
+                <span class="dock-title">{{ window.title }}</span>
+                <span class="dock-state">{{ window.state }}</span>
+                <span
+                  class="dock-close"
+                  role="button"
+                  tabindex="0"
+                  @click.stop="closeWindow(window)"
+                  @keydown.enter.stop.prevent="closeWindow(window)"
+                >
+                  x
+                </span>
+              </button>
+            </footer>
+          </section>
+        </div>
+
+        <div v-else class="mobile-shell">
+          <header class="mobile-topbar">
+            <div class="mobile-brand">
+              <img class="brand-mark" :src="logoUrl" alt="" />
+              <span>{{ t.app.name }}</span>
+            </div>
+            <UserButton />
+          </header>
+
+          <nav class="mobile-nav">
+            <button :class="{ active: store.activeTab === 'patchbay' }" @click="store.setTab('patchbay')">{{ t.nav.patchbay }}</button>
+            <button :class="{ active: store.activeTab === 'devices' }" @click="store.setTab('devices')">{{ t.nav.devices }}</button>
+            <button :class="{ active: store.activeTab === 'nodeView' }" @click="store.setTab('nodeView')">{{ t.nav.nodeView }}</button>
+            <button :class="{ active: isPortabilityRoute }" @click="openTool('portability')">{{ t.nav.portability }}</button>
+            <button v-if="canAccessAdmin" :class="{ active: isAdminRoute }" @click="openTool('admin')">Admin</button>
+          </nav>
+
+          <main class="mobile-content">
+            <template v-if="isAdminRoute">
+              <AdminAccessPanel v-if="canAccessAdmin" />
+            </template>
+            <template v-else-if="isPortabilityRoute">
+              <DataPortability />
+            </template>
+            <template v-else>
+              <PatchBayGrid v-if="store.activeTab === 'patchbay'" />
+              <DevicesManager v-if="store.activeTab === 'devices'" />
+              <NodeGraphMock v-if="store.activeTab === 'nodeView'" />
+            </template>
+          </main>
+        </div>
 
         <AuthDiagnosticsPanel v-if="showAuthDiagnostics" />
-
         <ToastHost />
       </div>
     </div>
@@ -326,7 +604,6 @@ const goToPortability = () => {
   background: linear-gradient(135deg, #1a1a2e 0%, #0f0f1e 100%);
 }
 
-/* Organization Required Screen */
 .org-required-screen {
   display: flex;
   align-items: center;
@@ -350,7 +627,6 @@ const goToPortability = () => {
   width: 80px;
   height: 80px;
   margin-bottom: var(--space-4);
-  filter: drop-shadow(0 4px 12px rgba(212, 154, 79, 0.3));
 }
 
 .org-title {
@@ -378,34 +654,17 @@ const goToPortability = () => {
   justify-content: center;
 }
 
-.org-help {
-  background: rgba(212, 154, 79, 0.1);
-  border: 1px solid rgba(212, 154, 79, 0.3);
-  border-radius: 8px;
-  padding: var(--space-4);
-}
-
-.help-text {
-  font-size: 0.9rem;
-  color: rgba(255, 255, 255, 0.85);
-  margin: 0;
-  line-height: 1.6;
-  text-align: left;
-}
-
-/* Main App */
 .app-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  animation: fade-in 0.6s ease-out;
 }
 
 .app-shell {
   display: flex;
-  flex-direction: column;
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 
 .auth-context-banner {
@@ -416,8 +675,6 @@ const goToPortability = () => {
   padding: var(--space-2) var(--space-4);
   background: rgba(212, 154, 79, 0.12);
   border-bottom: 1px solid rgba(212, 154, 79, 0.35);
-  color: var(--text-primary);
-  font-size: 0.9rem;
 }
 
 .auth-degraded-banner {
@@ -428,7 +685,6 @@ const goToPortability = () => {
   padding: var(--space-3) var(--space-5);
   background: rgba(176, 75, 61, 0.15);
   border-bottom: 1px solid rgba(176, 75, 61, 0.4);
-  color: var(--text-primary);
 }
 
 .auth-degraded-text {
@@ -438,71 +694,221 @@ const goToPortability = () => {
   font-size: 0.95rem;
 }
 
-.topbar {
+.workspace-shell {
   display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: var(--space-4);
-  align-items: center;
-  padding: var(--space-3) var(--space-5);
-  background: rgba(26, 23, 19, 0.94);
-  border-bottom: 1px solid var(--border-default);
-  backdrop-filter: blur(14px);
+  grid-template-columns: 220px 1fr;
+  width: 100%;
+  min-height: 0;
 }
 
-.topbar-right {
+.tool-rail {
+  border-right: 1px solid var(--border-default);
+  background: rgba(20, 18, 14, 0.95);
   display: flex;
-  align-items: center;
-  gap: var(--space-4);
-}
-
-.user-menu {
-  display: flex;
-  align-items: center;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.rail-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 700;
+}
+
+.rail-logo {
+  width: 32px;
+  height: 32px;
+}
+
+.tool-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.tool-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--border-default);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  border-radius: var(--radius-2);
+  padding: 10px;
+  cursor: pointer;
+}
+
+.tool-btn.active {
+  border-color: rgba(212, 154, 79, 0.8);
+  color: var(--text-primary);
+  background: rgba(212, 154, 79, 0.15);
+}
+
+.tool-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  background: rgba(212, 154, 79, 0.18);
+  border: 1px solid rgba(212, 154, 79, 0.35);
+}
+
+.tool-label {
+  font-weight: 600;
+}
+
+.rail-footer {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.rail-user {
+  margin-top: var(--space-2);
+}
+
+.canvas-shell {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 1fr auto;
+}
+
+.canvas-stage {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 15% 12%, rgba(212, 154, 79, 0.08), transparent 42%),
+    radial-gradient(circle at 85% 76%, rgba(61, 122, 88, 0.12), transparent 44%),
+    linear-gradient(140deg, #181510, #12100d 58%, #0f0d0a);
+}
+
+.no-select-canvas,
+.no-select-canvas * {
+  user-select: none;
+}
+
+.no-select-canvas input,
+.no-select-canvas textarea,
+.no-select-canvas [contenteditable='true'] {
+  user-select: text;
+}
+
+.no-select-canvas .selectable-detail-text,
+.no-select-canvas .selectable-detail-text * {
+  user-select: text;
+}
+
+.window-dock {
+  display: flex;
+  gap: var(--space-2);
+  overflow-x: auto;
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border-default);
+  background: rgba(19, 16, 12, 0.96);
+}
+
+.dock-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  border-radius: var(--radius-2);
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.dock-item.minimized {
+  opacity: 0.75;
+}
+
+.dock-title {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.dock-state {
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+}
+
+.dock-close {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-default);
+}
+
+.mobile-shell {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  width: 100%;
+}
+
+.mobile-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.mobile-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-weight: 700;
 }
 
 .brand-mark {
-  width: 44px;
-  height: 44px;
+  width: 28px;
+  height: 28px;
 }
 
-.brand-text {
+.mobile-nav {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-default);
+  overflow: auto;
 }
 
-.brand-title {
-  font-family: var(--font-display);
-  font-size: 1.4rem;
-  letter-spacing: 0.04em;
-}
-
-.brand-subtitle {
-  font-size: 0.85rem;
+.mobile-nav button {
+  background: var(--surface-2);
+  border: 1px solid var(--border-default);
   color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.18em;
+  border-radius: var(--radius-round);
+  padding: 6px 12px;
 }
 
-.topbar-center {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-4);
-  flex-wrap: wrap;
+.mobile-nav button.active {
+  color: #11130f;
+  background: var(--accent);
+}
+
+.mobile-content {
+  min-height: 0;
+  overflow: hidden;
+  padding: var(--space-3);
 }
 
 .status-chip {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  padding: 6px 12px;
+  padding: 6px 10px;
   border-radius: var(--radius-round);
   border: 1px solid var(--border-default);
   color: var(--text-secondary);
@@ -526,102 +932,28 @@ const goToPortability = () => {
   background: var(--accent-2);
 }
 
-.status-chip.loading .status-dot {
-  background: var(--warning);
-}
-
-.status-chip.error .status-dot {
-  background: var(--danger);
-}
-
-.topbar-actions {
-  display: flex;
-  gap: var(--space-2);
-}
-
 .ghost-btn {
   background: transparent;
   border: 1px solid var(--border-default);
   color: var(--text-secondary);
-  padding: 6px 12px;
+  padding: 6px 10px;
   border-radius: var(--radius-2);
   cursor: pointer;
-  font-weight: 600;
-  transition: border-color 0.2s ease, color 0.2s ease;
-}
-
-.ghost-btn:hover {
-  border-color: var(--accent);
-  color: var(--text-primary);
 }
 
 .ghost-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  border-color: var(--border-subtle);
-  color: var(--text-tertiary);
-}
-
-.main-nav {
-  display: flex;
-  gap: var(--space-2);
-  background: var(--surface-2);
-  padding: var(--space-1);
-  border-radius: var(--radius-round);
-  border: 1px solid var(--border-default);
-}
-
-.main-nav button {
-  background-color: transparent;
-  border: none;
-  color: var(--text-secondary);
-  padding: 8px 16px;
-  cursor: pointer;
-  font-size: 0.95rem;
-  font-weight: 600;
-  border-radius: var(--radius-round);
-  transition: all 0.2s;
-}
-
-.main-nav button:hover {
-  color: var(--text-primary);
-  background-color: var(--surface-3);
-}
-
-.main-nav button.active {
-  color: #11130f;
-  background-color: var(--accent);
-}
-
-.content-area {
-  flex: 1;
-  overflow: hidden;
-  position: relative;
-  padding: var(--space-5);
-}
-
-.admin-content {
-  height: 100%;
-  overflow: auto;
-}
-
-.not-authorized {
-  display: grid;
-  gap: var(--space-2);
-  align-content: start;
 }
 
 .loading-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  inset: 0;
   background: rgba(8, 7, 6, 0.65);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 2000;
+  z-index: 2800;
 }
 
 .loading-card {
@@ -633,28 +965,9 @@ const goToPortability = () => {
   box-shadow: var(--shadow-1);
 }
 
-@media (max-width: 960px) {
-  .topbar {
-    grid-template-columns: 1fr;
-    justify-items: stretch;
-  }
-
-  .topbar-center {
-    justify-content: space-between;
-  }
-
-  .topbar-right {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-3);
-  }
-
-  .main-nav {
-    justify-content: space-between;
-  }
-
-  .user-menu {
-    justify-content: center;
+@media (max-width: 1023px) {
+  .workspace-shell {
+    display: none;
   }
 }
 </style>

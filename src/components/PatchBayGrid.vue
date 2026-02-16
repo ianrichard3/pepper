@@ -1,17 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick } from 'vue'
-import { store, type PatchBayNode, type Device, type DevicePort } from '../store'
-import ConfirmDialog from '../ui/ConfirmDialog.vue'
+import { store, type PatchBayNode } from '../store'
+import { windowManager } from '@/stores/windowManager'
 import { strings } from '../ui/strings'
 
 const t = strings
 const nodes = computed(() => store.patchbayNodes)
-const selectedCell = ref<PatchBayNode | null>(null)
-const showLinkSearch = ref(false)
-const searchQuery = ref('')
 const gridSearchQuery = ref('')
-const showOverwriteConfirm = ref(false)
-const overwriteTarget = ref<{ node: PatchBayNode; deviceName: string; portLabel: string } | null>(null)
 
 const rowLabels = t.patchbay.rowLabels
 const columnLabels = Array.from({ length: 48 }, (_, index) => index + 1)
@@ -62,69 +57,36 @@ const getCellTooltip = (patchbayId: number) => {
 }
 
 const handleCellClick = async (node: PatchBayNode) => {
+  const parentWindowId = windowManager.getToolWindow('patchbay')?.id || 'tool:patchbay'
   if (store.selectionMode) {
     const existing = getConnection(node.id)
     if (existing) {
-      overwriteTarget.value = {
-        node,
-        deviceName: existing.device.name,
-        portLabel: existing.port.label,
-      }
-      showOverwriteConfirm.value = true
+      windowManager.openChildWindow(
+        parentWindowId,
+        'patchbay-overwrite-confirm',
+        t.confirm.overwriteTitle,
+        {
+          patchbayId: node.id,
+          deviceName: existing.device.name,
+          portLabel: existing.port.label,
+        },
+        { forceUnique: true },
+      )
       return
     }
     await store.completeLink(node.id)
   } else {
-    selectedCell.value = node
+    windowManager.openChildWindow(
+      parentWindowId,
+      'patchbay-point-detail',
+      t.patchbay.patchPointTitle(node.id),
+      { patchbayId: node.id, parentWindowId },
+      { id: `patchbay-point-detail:${node.id}` },
+    )
   }
-}
-
-const closePopup = () => {
-  selectedCell.value = null
-  showLinkSearch.value = false
-  searchQuery.value = ''
-}
-
-const handleUnlink = async () => {
-  if (selectedCell.value) {
-    const connection = getConnection(selectedCell.value.id)
-    if (connection) {
-      await store.unlinkPort(connection.device.id, connection.port.id)
-    }
-  }
-}
-
-const openLinkSearch = () => {
-  showLinkSearch.value = true
-}
-
-const confirmOverwrite = async () => {
-  if (overwriteTarget.value) {
-    await store.completeLink(overwriteTarget.value.node.id)
-  }
-  showOverwriteConfirm.value = false
-  overwriteTarget.value = null
-}
-
-const cancelOverwrite = () => {
-  showOverwriteConfirm.value = false
-  overwriteTarget.value = null
 }
 
 // Search Logic
-const filteredDevices = computed(() => {
-  if (!searchQuery.value) return store.devices
-  const query = searchQuery.value.toLowerCase()
-  return store.devices.filter(d => d.name.toLowerCase().includes(query))
-})
-
-const selectDeviceForLink = async (device: Device, port: DevicePort) => {
-  if (selectedCell.value) {
-    await store.linkPatchbayToDevice(selectedCell.value.id, device.id, port.id)
-    closePopup()
-  }
-}
-
 watch(() => store.patchbayFocusId, async (focusId) => {
   if (!focusId) return
   await nextTick()
@@ -212,80 +174,7 @@ watch(() => store.patchbayFocusId, async (focusId) => {
       </div>
     </div>
 
-    <ConfirmDialog
-      v-if="showOverwriteConfirm && overwriteTarget"
-      :title="t.confirm.overwriteTitle"
-      :message="t.confirm.overwriteMessage(overwriteTarget.deviceName, overwriteTarget.portLabel)"
-      @confirm="confirmOverwrite"
-      @cancel="cancelOverwrite"
-    />
-
-    <div v-if="selectedCell && !showLinkSearch" class="modal-overlay" @click="closePopup">
-      <div class="modal-content" @click.stop>
-        <h2>{{ t.patchbay.patchPointTitle(selectedCell.id) }}</h2>
-        <p><strong>{{ t.patchbay.nameLabel }}:</strong> {{ selectedCell.name }}</p>
-        <p><strong>{{ t.patchbay.typeLabel }}:</strong> {{ selectedCell.type }}</p>
-        <p><strong>{{ t.patchbay.descriptionLabel }}:</strong> {{ selectedCell.description }}</p>
-
-        <div class="connection-status">
-          <h3>{{ t.patchbay.connectionLabel }}</h3>
-          <div v-if="getConnection(selectedCell.id)" class="connected-info">
-            <p>
-              {{ t.patchbay.connectedTo }}:
-              <strong>{{ getConnection(selectedCell.id)?.device.name }}</strong>
-            </p>
-            <p>
-              {{ t.patchbay.portLabel }}:
-              <strong>{{ getConnection(selectedCell.id)?.port.label }}</strong>
-            </p>
-            <button class="unlink-btn" @click="handleUnlink">{{ t.patchbay.unlink }}</button>
-          </div>
-          <div v-else class="disconnected-info">
-            <p>{{ t.patchbay.notConnected }}</p>
-            <button class="link-btn" @click="openLinkSearch">{{ t.patchbay.linkDeviceAction }}</button>
-          </div>
-        </div>
-
-        <button class="close-btn-main" @click="closePopup">{{ t.patchbay.close }}</button>
-      </div>
-    </div>
-
-    <div v-if="showLinkSearch" class="modal-overlay" @click="closePopup">
-      <div class="modal-content search-modal" @click.stop>
-        <div class="modal-header">
-          <h2>{{ t.patchbay.linkDeviceTitle(selectedCell?.id || 0) }}</h2>
-          <button class="close-btn" @click="closePopup">{{ t.app.closeSymbol }}</button>
-        </div>
-
-        <input
-          v-model="searchQuery"
-          :placeholder="t.patchbay.searchDevicesPlaceholder"
-          class="search-input"
-          autofocus
-        />
-
-        <div class="device-search-list">
-          <div v-for="device in filteredDevices" :key="device.id" class="search-device-item">
-            <div class="device-name">{{ device.name }}</div>
-            <div class="device-ports">
-              <button
-                v-for="port in device.ports"
-                :key="port.id"
-                class="port-select-btn"
-                :class="{ active: port.patchbayId === selectedCell?.id, occupied: port.patchbayId && port.patchbayId !== selectedCell?.id }"
-                :disabled="!!(port.patchbayId && port.patchbayId !== selectedCell?.id)"
-                @click="selectDeviceForLink(device, port)"
-              >
-                {{ port.label }}
-                <span v-if="port.patchbayId && port.patchbayId !== selectedCell?.id" class="occupied-tag">
-                  {{ t.patchbay.occupiedTag(port.patchbayId) }}
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    
   </div>
 </template>
 
