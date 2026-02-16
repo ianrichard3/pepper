@@ -53,6 +53,10 @@ interface PersistedLayout {
 const STORAGE_PREFIX = 'pepper.windowLayout.v2'
 const MIN_WIDTH = 300
 const MIN_HEIGHT = 180
+const CANVAS_PADDING = 8
+const MINIMIZED_VISIBLE_HEIGHT = 42
+const HEADER_VISIBLE_HEIGHT = 42
+const MIN_HEADER_VISIBLE_WIDTH = 120
 const MAX_DEVICE_DETAIL_WINDOWS = 3
 const CHILD_KIND_LIMIT = 3
 const NON_RESTORABLE_CHILD_KINDS = new Set<ChildWindowKind>([
@@ -82,12 +86,32 @@ function cloneRect(rect: WindowRect): WindowRect {
   return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
 }
 
-function clampRect(rect: WindowRect, viewportWidth: number, viewportHeight: number): WindowRect {
-  const width = Math.min(Math.max(rect.width, MIN_WIDTH), Math.max(MIN_WIDTH, viewportWidth - 16))
-  const height = Math.min(Math.max(rect.height, MIN_HEIGHT), Math.max(MIN_HEIGHT, viewportHeight - 16))
-  const x = Math.max(8, Math.min(rect.x, Math.max(8, viewportWidth - width - 8)))
-  const y = Math.max(8, Math.min(rect.y, Math.max(8, viewportHeight - height - 8)))
-  return { x, y, width, height }
+function clampSize(rect: WindowRect, viewportWidth: number, viewportHeight: number): WindowRect {
+  const width = Math.min(Math.max(rect.width, MIN_WIDTH), Math.max(MIN_WIDTH, viewportWidth - CANVAS_PADDING * 2))
+  const height = Math.min(Math.max(rect.height, MIN_HEIGHT), Math.max(MIN_HEIGHT, viewportHeight - CANVAS_PADDING * 2))
+  return { ...rect, width, height }
+}
+
+function visibleHeightForState(rect: WindowRect, state: WindowState): number {
+  if (state === 'minimized') return MINIMIZED_VISIBLE_HEIGHT
+  return rect.height
+}
+
+function clampPosition(rect: WindowRect, state: WindowState, viewportWidth: number, viewportHeight: number): WindowRect {
+  const minVisibleHeaderWidth = Math.min(rect.width, MIN_HEADER_VISIBLE_WIDTH)
+  const minX = CANVAS_PADDING - (rect.width - minVisibleHeaderWidth)
+  const maxX = viewportWidth - CANVAS_PADDING - minVisibleHeaderWidth
+  const visibleHeight = visibleHeightForState(rect, state)
+  const minY = CANVAS_PADDING
+  const maxY = viewportHeight - CANVAS_PADDING - Math.min(visibleHeight, HEADER_VISIBLE_HEIGHT)
+  const x = Math.max(minX, Math.min(rect.x, maxX))
+  const y = Math.max(minY, Math.min(rect.y, maxY))
+  return { ...rect, x, y }
+}
+
+function clampRectForState(rect: WindowRect, state: WindowState, viewportWidth: number, viewportHeight: number): WindowRect {
+  const sized = clampSize(rect, viewportWidth, viewportHeight)
+  return clampPosition(sized, state, viewportWidth, viewportHeight)
 }
 
 function safePayload(value: unknown): Record<string, unknown> {
@@ -121,7 +145,10 @@ export const windowManager = reactive({
     this.viewport.height = Math.max(height, 320)
     this.windows = this.windows.map((window) => {
       if (window.state === 'maximized') return window
-      return { ...window, rect: clampRect(window.rect, this.viewport.width, this.viewport.height) }
+      return {
+        ...window,
+        rect: clampRectForState(window.rect, window.state, this.viewport.width, this.viewport.height),
+      }
     })
   },
 
@@ -141,7 +168,7 @@ export const windowManager = reactive({
       return existing
     }
 
-    const defaultRect = clampRect(TOOL_DEFAULT_RECTS[kind], this.viewport.width, this.viewport.height)
+    const defaultRect = clampRectForState(TOOL_DEFAULT_RECTS[kind], 'normal', this.viewport.width, this.viewport.height)
     const window: ManagedWindow = {
       id: `tool:${kind}`,
       kind,
@@ -191,7 +218,7 @@ export const windowManager = reactive({
       title,
       parentId,
       state: 'normal',
-      rect: clampRect(baseRect, this.viewport.width, this.viewport.height),
+      rect: clampRectForState(baseRect, 'normal', this.viewport.width, this.viewport.height),
       previousRect: null,
       zIndex: this.nextZIndex++,
       createdAt: Date.now(),
@@ -247,7 +274,7 @@ export const windowManager = reactive({
       title,
       parentId,
       state: 'normal',
-      rect: clampRect(baseRect, this.viewport.width, this.viewport.height),
+      rect: clampRectForState(baseRect, 'normal', this.viewport.width, this.viewport.height),
       previousRect: null,
       zIndex: this.nextZIndex++,
       createdAt: Date.now(),
@@ -270,7 +297,7 @@ export const windowManager = reactive({
   moveWindow(windowId: string, x: number, y: number) {
     const window = this.getWindow(windowId)
     if (!window || window.state === 'maximized') return
-    window.rect = clampRect({ ...window.rect, x, y }, this.viewport.width, this.viewport.height)
+    window.rect = clampRectForState({ ...window.rect, x, y }, window.state, this.viewport.width, this.viewport.height)
     window.updatedAt = Date.now()
     this.persist()
   },
@@ -278,7 +305,7 @@ export const windowManager = reactive({
   resizeWindow(windowId: string, rect: WindowRect) {
     const window = this.getWindow(windowId)
     if (!window || window.state === 'maximized') return
-    window.rect = clampRect(rect, this.viewport.width, this.viewport.height)
+    window.rect = clampRectForState(rect, window.state, this.viewport.width, this.viewport.height)
     window.updatedAt = Date.now()
     this.persist()
   },
@@ -300,7 +327,7 @@ export const windowManager = reactive({
     } else {
       window.state = 'normal'
       if (window.previousRect) {
-        window.rect = clampRect(window.previousRect, this.viewport.width, this.viewport.height)
+        window.rect = clampRectForState(window.previousRect, 'normal', this.viewport.width, this.viewport.height)
       }
       window.previousRect = null
     }
@@ -315,7 +342,7 @@ export const windowManager = reactive({
     if (window.state === 'maximized') {
       window.state = 'normal'
       if (window.previousRect) {
-        window.rect = clampRect(window.previousRect, this.viewport.width, this.viewport.height)
+        window.rect = clampRectForState(window.previousRect, 'normal', this.viewport.width, this.viewport.height)
       }
       window.previousRect = null
     } else if (window.state === 'minimized') {
@@ -371,16 +398,17 @@ export const windowManager = reactive({
       for (const entry of parsed.windows) {
         if (!entry?.id || !entry?.kind || !entry?.title) continue
         if (NON_RESTORABLE_CHILD_KINDS.has(entry.kind as ChildWindowKind)) continue
-        const rect = clampRect(entry.rect, this.viewport.width, this.viewport.height)
+        const state = entry.state === 'minimized' || entry.state === 'maximized' ? entry.state : 'normal'
+        const rect = clampRectForState(entry.rect, state, this.viewport.width, this.viewport.height)
         loaded.push({
           id: String(entry.id),
           kind: entry.kind,
           title: String(entry.title),
           parentId: entry.parentId ? String(entry.parentId) : null,
-          state: entry.state === 'minimized' || entry.state === 'maximized' ? entry.state : 'normal',
+          state,
           rect,
           previousRect: entry.previousRect
-            ? clampRect(entry.previousRect, this.viewport.width, this.viewport.height)
+            ? clampRectForState(entry.previousRect, 'normal', this.viewport.width, this.viewport.height)
             : null,
           zIndex: this.nextZIndex++,
           createdAt: Number(entry.createdAt || Date.now()),

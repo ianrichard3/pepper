@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, watchEffect, watch, ref, onMounted, onBeforeUnmount } from 'vue'
+import { computed, watchEffect, watch, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { SignedIn, SignedOut, UserButton, OrganizationSwitcher, useAuth, useClerk } from '@clerk/vue'
 import { registerTokenGetter } from './lib/authToken'
@@ -32,6 +32,7 @@ import logoUrl from './assets/el-riche-mark.svg'
 import { isAdminRole } from './lib/adminAuth'
 
 const t = strings
+const SIDEBAR_STORAGE_PREFIX = 'pepper.sidebar.v1'
 const route = useRoute()
 const router = useRouter()
 const { isLoaded, isSignedIn, getToken, orgId } = useAuth()
@@ -49,8 +50,10 @@ const { hasAppAccess, canExport } = useEntitlements()
 const isDev = import.meta.env.DEV
 const showAuthDiagnostics = isDev && new URLSearchParams(window.location.search).has('authdiag')
 const isDesktop = ref(window.innerWidth >= 1024)
+const isRailCollapsed = ref(false)
 const canvasStageRef = ref<HTMLElement | null>(null)
 let stageObserver: ResizeObserver | null = null
+let observedStageElement: HTMLElement | null = null
 
 const orgLoaded = computed(() => !isSignedIn.value || isLoaded.value)
 const needsOrganization = computed(() => isSignedIn.value && (!orgId.value || store.orgRequired))
@@ -98,6 +101,8 @@ const activeToolKinds = computed(() => {
   return set
 })
 
+const sidebarStorageKey = computed(() => `${SIDEBAR_STORAGE_PREFIX}:${orgId.value || 'no-org'}:desktop`)
+
 const updateViewport = () => {
   isDesktop.value = window.innerWidth >= 1024
   updateCanvasViewport()
@@ -106,12 +111,24 @@ const updateViewport = () => {
 const updateCanvasViewport = () => {
   if (!desktopCanvasEnabled.value) return
   const stage = canvasStageRef.value
-  if (!stage) {
-    windowManager.setViewport(window.innerWidth - 200, window.innerHeight - 200)
-    return
-  }
+  if (!stage) return
   const rect = stage.getBoundingClientRect()
   windowManager.setViewport(Math.round(rect.width), Math.round(rect.height))
+}
+
+const syncStageObserver = () => {
+  if (typeof ResizeObserver === 'undefined') return
+  if (!stageObserver) {
+    stageObserver = new ResizeObserver(() => updateCanvasViewport())
+  }
+  if (observedStageElement && observedStageElement !== canvasStageRef.value) {
+    stageObserver.unobserve(observedStageElement)
+    observedStageElement = null
+  }
+  if (canvasStageRef.value && observedStageElement !== canvasStageRef.value) {
+    stageObserver.observe(canvasStageRef.value)
+    observedStageElement = canvasStageRef.value
+  }
 }
 
 const syncScope = () => {
@@ -119,6 +136,32 @@ const syncScope = () => {
   const scope = `${orgId.value || 'no-org'}:desktop`
   windowManager.setScope(scope)
   updateCanvasViewport()
+}
+
+const loadSidebarPreference = () => {
+  if (!desktopCanvasEnabled.value) {
+    isRailCollapsed.value = false
+    return
+  }
+  try {
+    isRailCollapsed.value = localStorage.getItem(sidebarStorageKey.value) === '1'
+  } catch {
+    isRailCollapsed.value = false
+  }
+}
+
+const persistSidebarPreference = () => {
+  if (!desktopCanvasEnabled.value) return
+  try {
+    localStorage.setItem(sidebarStorageKey.value, isRailCollapsed.value ? '1' : '0')
+  } catch {
+    // ignore storage errors
+  }
+}
+
+const toggleRailCollapsed = () => {
+  isRailCollapsed.value = !isRailCollapsed.value
+  persistSidebarPreference()
 }
 
 watchEffect(() => {
@@ -179,6 +222,20 @@ watchEffect(() => {
 
 watch([orgId, isDesktop], () => {
   syncScope()
+  loadSidebarPreference()
+}, { immediate: true })
+
+watch([desktopCanvasEnabled, () => canvasStageRef.value], async ([desktopEnabled]) => {
+  if (!desktopEnabled) {
+    if (stageObserver && observedStageElement) {
+      stageObserver.unobserve(observedStageElement)
+      observedStageElement = null
+    }
+    return
+  }
+  await nextTick()
+  syncStageObserver()
+  updateCanvasViewport()
 }, { immediate: true })
 
 watch(canAccessAdmin, (allowed) => {
@@ -341,16 +398,18 @@ const notifyComingSoon = () => {
 
 onMounted(() => {
   window.addEventListener('resize', updateViewport)
-  if (typeof ResizeObserver !== 'undefined') {
-    stageObserver = new ResizeObserver(() => updateCanvasViewport())
-    if (canvasStageRef.value) stageObserver.observe(canvasStageRef.value)
-  }
+  syncStageObserver()
   syncScope()
+  void nextTick(() => {
+    syncStageObserver()
+    updateCanvasViewport()
+  })
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', updateViewport)
   if (stageObserver) stageObserver.disconnect()
+  observedStageElement = null
 })
 </script>
 
@@ -408,11 +467,19 @@ onBeforeUnmount(() => {
           <div class="loading-card">{{ t.app.loadingData }}</div>
         </div>
 
-        <div v-if="desktopCanvasEnabled" class="workspace-shell">
-          <aside class="tool-rail">
+        <div v-if="desktopCanvasEnabled" class="workspace-shell" :class="{ collapsed: isRailCollapsed }">
+          <aside class="tool-rail" :class="{ collapsed: isRailCollapsed }">
             <div class="rail-brand">
               <img class="rail-logo" :src="logoUrl" alt="" />
-              <span>Pepper</span>
+              <span v-if="!isRailCollapsed">Pepper</span>
+              <button
+                class="rail-toggle"
+                type="button"
+                :title="isRailCollapsed ? 'Expand sidebar' : 'Collapse sidebar'"
+                @click="toggleRailCollapsed"
+              >
+                {{ isRailCollapsed ? '>' : '<' }}
+              </button>
             </div>
 
             <nav class="tool-list">
@@ -421,20 +488,25 @@ onBeforeUnmount(() => {
                 :key="tool.id"
                 class="tool-btn"
                 :class="{ active: activeToolKinds.has(tool.id) }"
+                :title="tool.label"
                 @click="openTool(tool.id)"
               >
                 <span class="tool-icon">{{ tool.icon }}</span>
-                <span class="tool-label">{{ tool.label }}</span>
+                <span v-if="!isRailCollapsed" class="tool-label">{{ tool.label }}</span>
               </button>
             </nav>
 
             <div class="rail-footer">
               <div class="status-chip" :class="{ loading: store.loading, error: store.error }">
                 <span class="status-dot"></span>
-                <span>{{ statusLabel }}</span>
+                <span v-if="!isRailCollapsed">{{ statusLabel }}</span>
               </div>
-              <button class="ghost-btn" :disabled="!canExport" @click="openTool('portability')">{{ t.app.export }}</button>
-              <button class="ghost-btn" @click="notifyComingSoon">{{ t.app.help }}</button>
+              <button class="ghost-btn" :title="t.app.export" :disabled="!canExport" @click="openTool('portability')">
+                <span>{{ isRailCollapsed ? 'EX' : t.app.export }}</span>
+              </button>
+              <button class="ghost-btn" :title="t.app.help" @click="notifyComingSoon">
+                <span>{{ isRailCollapsed ? '?' : t.app.help }}</span>
+              </button>
               <div class="rail-user"><UserButton /></div>
             </div>
           </aside>
@@ -699,6 +771,11 @@ onBeforeUnmount(() => {
   grid-template-columns: 220px 1fr;
   width: 100%;
   min-height: 0;
+  transition: grid-template-columns 0.2s ease;
+}
+
+.workspace-shell.collapsed {
+  grid-template-columns: 72px 1fr;
 }
 
 .tool-rail {
@@ -708,6 +785,11 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-3);
+  transition: padding 0.2s ease;
+}
+
+.tool-rail.collapsed {
+  padding: var(--space-3) 8px;
 }
 
 .rail-brand {
@@ -715,11 +797,35 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: var(--space-2);
   font-weight: 700;
+  min-height: 32px;
+}
+
+.tool-rail.collapsed .rail-brand {
+  justify-content: center;
 }
 
 .rail-logo {
   width: 32px;
   height: 32px;
+}
+
+.tool-rail.collapsed .rail-logo {
+  display: none;
+}
+
+.rail-toggle {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.tool-rail.collapsed .rail-toggle {
+  margin-left: 0;
 }
 
 .tool-list {
@@ -738,6 +844,12 @@ onBeforeUnmount(() => {
   border-radius: var(--radius-2);
   padding: 10px;
   cursor: pointer;
+  justify-content: flex-start;
+}
+
+.tool-rail.collapsed .tool-btn {
+  justify-content: center;
+  padding: 10px 6px;
 }
 
 .tool-btn.active {
@@ -771,6 +883,20 @@ onBeforeUnmount(() => {
 
 .rail-user {
   margin-top: var(--space-2);
+}
+
+.tool-rail.collapsed .rail-footer {
+  align-items: center;
+}
+
+.tool-rail.collapsed .ghost-btn {
+  width: 100%;
+  padding: 6px 0;
+}
+
+.tool-rail.collapsed .status-chip {
+  width: 100%;
+  justify-content: center;
 }
 
 .canvas-shell {
