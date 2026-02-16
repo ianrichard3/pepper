@@ -24,6 +24,7 @@ export interface Device {
   name: string;
   type: string;
   category: string;
+  tags?: string[];
   ports: DevicePort[];
   imageUrl?: string | null;
   imageUpdatedAt?: string | null;
@@ -95,6 +96,7 @@ function apiDeviceToDevice(apiDevice: ApiDevice): Device {
     name: apiDevice.name,
     type: apiDevice.type,
     category: apiDevice.category || inferCategoryFromType(apiDevice.type),
+    tags: apiDevice.tags || [],
     ports: apiDevice.ports.map(apiPortToDevicePort),
     imageUrl: apiDevice.image_url,
     imageUpdatedAt: apiDevice.image_updated_at,
@@ -569,6 +571,7 @@ export const store = reactive({
     name: string
     type: string
     category: string
+    tags?: string[]
     ports: DevicePort[]
     catalogSource?: DeviceCatalogSource | null
   }): Promise<Device> {
@@ -577,6 +580,7 @@ export const store = reactive({
         name: device.name,
         type: device.type,
         category: device.category,
+        tags: device.tags || [],
         ports: device.ports.map(p => ({
           label: p.label,
           type: p.type,
@@ -605,12 +609,13 @@ export const store = reactive({
     }
   },
 
-  async updateDevice(id: number, payload: { name: string; type: string; category: string; ports: DevicePort[] }): Promise<Device> {
+  async updateDevice(id: number, payload: { name: string; type: string; category: string; tags?: string[]; ports: DevicePort[] }): Promise<Device> {
     try {
       const apiDevice = await api.updateDevice(id, {
         name: payload.name,
         type: payload.type,
         category: payload.category,
+        tags: payload.tags || [],
         ports: payload.ports.map(p => ({
           id: p.id || undefined,
           label: p.label,

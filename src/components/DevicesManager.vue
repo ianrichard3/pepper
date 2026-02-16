@@ -4,6 +4,7 @@ import { useAuth } from '@clerk/vue'
 import { api, type ApiCatalogItemDetails, type ApiCatalogSearchItem } from '../lib/api'
 import { useEntitlements } from '@/lib/useEntitlements'
 import { guardAiDetection } from '@/lib/aiDetectionGuard'
+import { buildPortsFromCatalog, extractCatalogTags } from '@/lib/catalogAutofill'
 import { quotaStore } from '@/stores/quota'
 import { store, type Device, type DevicePort } from '../store'
 import { strings } from '../ui/strings'
@@ -145,7 +146,7 @@ const selectedDevice = ref<Device | null>(null)
 const showAddModal = ref(false)
 const addDeviceMode = ref<'manual' | 'ai' | 'catalog'>('manual')
 const editingDeviceId = ref<number | null>(null)
-const editSnapshot = ref<{ device: { name: string; type: string; category: string }; ports: DevicePort[] } | null>(null)
+const editSnapshot = ref<{ device: { name: string; type: string; category: string; tags: string[] }; ports: DevicePort[] } | null>(null)
 const deleteTarget = ref<Device | null>(null)
 const DRAFT_STORAGE_KEY = 'el-riche.addDeviceDraft'
 const LEGACY_DRAFT_STORAGE_KEY = 'pepper.addDeviceDraft'
@@ -171,10 +172,25 @@ const portTypeOptions = Object.keys(t.devices.portTypes) as Array<keyof typeof t
 const fallbackDeviceCategory = 'OTHER'
 const fallbackDeviceType = 'other'
 
+const parseTagsInput = (value: string): string[] => {
+  const seen = new Set<string>()
+  return value
+    .split(',')
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .filter((token) => {
+      const normalized = token.toLowerCase()
+      if (seen.has(normalized)) return false
+      seen.add(normalized)
+      return true
+    })
+}
+
 const newDevice = ref({
   name: '',
   category: fallbackDeviceCategory,
   type: fallbackDeviceType,
+  tags: [] as string[],
 })
 
 const newPorts = ref<Array<{ id?: string; label: string; type: 'Input' | 'Output' | 'Other'; patchbayId?: number | null }>>([])
@@ -184,6 +200,7 @@ const aiLoading = ref(false)
 const aiStatusMessage = ref<string | null>(null)
 const isEditing = computed(() => editingDeviceId.value !== null)
 const canUseCatalog = ref(false)
+const activeCatalogProvider = ref<string | null>(null)
 const catalogStatusReason = ref<string | null>(null)
 const catalogQuery = ref('')
 const catalogResults = ref<ApiCatalogSearchItem[]>([])
@@ -198,6 +215,12 @@ const selectedCatalogSource = ref<{
   sourceUrl?: string | null
   importedSnapshot: Record<string, unknown>
 } | null>(null)
+const tagsInput = computed({
+  get: () => newDevice.value.tags.join(', '),
+  set: (value: string) => {
+    newDevice.value.tags = parseTagsInput(value)
+  },
+})
 
 watch(canUseAiDetection, (allowed) => {
   if (!allowed && addDeviceMode.value === 'ai') {
@@ -342,14 +365,23 @@ const clearCatalogSelection = () => {
 
 const loadCatalogStatus = async () => {
   canUseCatalog.value = false
+  activeCatalogProvider.value = null
   catalogStatusReason.value = null
   try {
     const status = await api.getCatalogStatus()
-    const ebay = status.providers.find((provider) => provider.provider === 'EBAY')
-    canUseCatalog.value = Boolean(status.enabled && ebay?.available)
-    catalogStatusReason.value = ebay?.reason || null
+    const availableProviders = status.providers.filter((provider) => provider.available)
+    const mock = availableProviders.find((provider) => provider.provider === 'MOCK')
+    const ebay = availableProviders.find((provider) => provider.provider === 'EBAY')
+    const firstAvailable = mock || ebay || availableProviders[0] || null
+
+    activeCatalogProvider.value = status.enabled ? (firstAvailable?.provider || null) : null
+    canUseCatalog.value = Boolean(status.enabled && activeCatalogProvider.value)
+    catalogStatusReason.value = canUseCatalog.value
+      ? null
+      : (status.providers.find((provider) => provider.reason)?.reason || null)
   } catch {
     canUseCatalog.value = false
+    activeCatalogProvider.value = null
     catalogStatusReason.value = t.devices.catalogUnavailable
   }
 }
@@ -365,7 +397,13 @@ const searchCatalog = async () => {
   catalogSearchLoading.value = true
   catalogSearchError.value = null
   try {
-    const response = await api.searchCatalog({ provider: 'EBAY', q, page: 1, page_size: 20 })
+    const provider = activeCatalogProvider.value
+    if (!provider) {
+      catalogSearchError.value = catalogStatusReason.value || t.devices.catalogUnavailable
+      catalogResults.value = []
+      return
+    }
+    const response = await api.searchCatalog({ provider, q, page: 1, page_size: 20 })
     catalogResults.value = response.items
     if (response.items.length === 0) {
       catalogSearchError.value = t.devices.catalogNoResults
@@ -390,8 +428,9 @@ const applyCatalogItemToForm = (item: ApiCatalogItemDetails) => {
     name: preferredName || '',
     category,
     type,
+    tags: extractCatalogTags(item),
   }
-  newPorts.value = []
+  newPorts.value = buildPortsFromCatalog(item)
   selectedCatalogSource.value = {
     provider: item.provider,
     externalId: item.external_id,
@@ -405,6 +444,7 @@ const applyCatalogItemToForm = (item: ApiCatalogItemDetails) => {
       identifiers: item.identifiers || {},
       specs: item.specs || {},
       source_url: item.source_url || null,
+      auto_tags: extractCatalogTags(item),
     },
   }
 }
@@ -447,6 +487,7 @@ const loadDraft = () => {
         name: String(draft.device.name ?? ''),
         category: normalizeDeviceCategory(String(draft.device.category ?? ''), String(draft.device.type ?? '')),
         type: normalizeDeviceType(String(draft.device.type ?? fallbackDeviceType), String(draft.device.category ?? fallbackDeviceCategory)),
+        tags: Array.isArray(draft.device.tags) ? draft.device.tags.map((tag: unknown) => String(tag).trim()).filter(Boolean) : [],
       }
     }
     if (Array.isArray(draft?.ports)) {
@@ -470,7 +511,7 @@ const clearDraft = () => {
 }
 
 const resetAddForm = (clear = false) => {
-  newDevice.value = { name: '', category: fallbackDeviceCategory, type: fallbackDeviceType }
+  newDevice.value = { name: '', category: fallbackDeviceCategory, type: fallbackDeviceType, tags: [] }
   newPorts.value = []
   addDeviceMode.value = 'manual'
   aiStatusMessage.value = null
@@ -537,6 +578,7 @@ const openEditModal = (device: Device) => {
       name: device.name,
       category: normalizeDeviceCategory(device.category, device.type),
       type: normalizeDeviceType(device.type, device.category),
+      tags: [...(device.tags || [])],
     },
     ports: device.ports.map(port => ({ ...port })),
   }
@@ -544,6 +586,7 @@ const openEditModal = (device: Device) => {
     name: device.name,
     category: normalizeDeviceCategory(device.category, device.type),
     type: normalizeDeviceType(device.type, device.category),
+    tags: [...(device.tags || [])],
   }
   newPorts.value = device.ports.map(port => ({
     id: port.id,
@@ -710,6 +753,7 @@ const handleAiFileChange = async (event: Event) => {
       name: device.name || '',
       category: normalizeDeviceCategory(device.category, device.type),
       type: normalizeDeviceType(device.type, device.category),
+      tags: [],
     }
     newPorts.value = device.ports.map((port) => ({
       label: port.label,
@@ -769,6 +813,7 @@ const handleAddDevice = async () => {
         name: newDevice.value.name,
         category: newDevice.value.category,
         type: newDevice.value.type,
+        tags: newDevice.value.tags,
         ports,
       })
       deviceId = updated.id
@@ -782,6 +827,7 @@ const handleAddDevice = async () => {
         name: newDevice.value.name,
         category: newDevice.value.category,
         type: newDevice.value.type,
+        tags: newDevice.value.tags,
         ports,
         catalogSource: selectedCatalogSource.value
           ? {
@@ -1274,6 +1320,13 @@ onMounted(() => {
               <label>{{ t.devices.typeLabel }}</label>
               <input v-model="newDevice.type" :placeholder="t.devices.subtypePlaceholder || 'Subtype'" />
             </div>
+            <div class="form-group">
+              <label>{{ t.devices.tagsLabel || 'Tags' }}</label>
+              <input
+                v-model="tagsInput"
+                :placeholder="t.devices.tagsPlaceholder || 'condition:used, connectivity:usb-c, phantom-power'"
+              />
+            </div>
             <p v-if="selectedCatalogSource && newPorts.length === 0" class="help-text">
               {{ t.devices.catalogPortsHint }}
             </p>
@@ -1463,7 +1516,7 @@ onMounted(() => {
 
 .devices-container.modal-only {
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
   padding: 0;
 }
 
@@ -1738,11 +1791,18 @@ onMounted(() => {
   justify-content: center;
   align-items: center;
   z-index: 1000;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--space-3) 0;
 }
 
 .modal-inline-host {
   position: relative;
-  display: block;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
   background: transparent;
 }
 
@@ -1767,6 +1827,9 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   max-width: 520px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .modal-content.floating-modal {
@@ -1774,6 +1837,9 @@ onMounted(() => {
   max-width: none;
   max-height: 100%;
   height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   border: none;
   box-shadow: none;
   border-radius: 0;
@@ -1786,13 +1852,17 @@ onMounted(() => {
 }
 
 .modal-content.add-device-modal .form-content {
-  flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  min-height: 0;
+  flex: 1 0 auto;
+  min-height: auto;
+  overflow: visible;
+  padding-bottom: var(--space-4);
 }
 
 .modal-content.floating-modal .form-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: var(--space-3) 0;
 }
 
@@ -1903,6 +1973,9 @@ onMounted(() => {
   background-color: var(--surface-2);
   display: flex;
   gap: var(--space-2);
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
 }
 
 .modal-content.floating-modal .form-footer {
@@ -2100,8 +2173,8 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-height: 200px;
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
   padding-right: 4px;
 }
 

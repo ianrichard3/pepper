@@ -24,6 +24,7 @@ export interface ApiDevice {
   name: string
   type: string
   category: string
+  tags?: string[]
   ports: ApiPort[]
   image_url?: string | null
   image_updated_at?: string | null
@@ -136,6 +137,7 @@ export interface ApiDeviceCreate {
   name: string
   type?: string
   category?: string
+  tags?: string[]
   catalog_source?: {
     provider: string
     external_id: string
@@ -153,6 +155,7 @@ export interface ApiDeviceUpdate {
   name: string
   type?: string
   category?: string
+  tags?: string[]
   ports: Array<{
     id?: string
     label: string
