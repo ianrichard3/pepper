@@ -60,6 +60,34 @@ body {
   overflow: hidden;
 }
 
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(212, 154, 79, 0.55) rgba(31, 28, 24, 0.85);
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, rgba(31, 28, 24, 0.95), rgba(24, 22, 19, 0.95));
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  border: 2px solid rgba(31, 28, 24, 0.95);
+  background: linear-gradient(180deg, rgba(176, 129, 67, 0.8), rgba(132, 98, 53, 0.82));
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(212, 154, 79, 0.92), rgba(166, 121, 60, 0.9));
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background: linear-gradient(180deg, rgba(106, 163, 111, 0.95), rgba(61, 122, 88, 0.95));
+}
+
 body::before {
   content: "";
   position: fixed;

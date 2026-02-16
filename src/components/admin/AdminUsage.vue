@@ -3,6 +3,10 @@ import { computed, ref } from 'vue'
 import { adminAccessStore } from '@/stores/adminAccess'
 import { store } from '@/store'
 
+const props = withDefaults(defineProps<{ floatingMode?: boolean }>(), {
+  floatingMode: false,
+})
+
 const feature = ref('ai_detection')
 const period = ref(String(new Date().getFullYear() * 100 + (new Date().getMonth() + 1)).padStart(6, '0'))
 
@@ -40,8 +44,8 @@ async function loadUsage() {
 </script>
 
 <template>
-  <section class="panel" v-if="adminAccessStore.workspaceId">
-    <h3>AI Usage</h3>
+  <section class="panel" :class="{ 'floating-mode': props.floatingMode }" v-if="adminAccessStore.workspaceId">
+    <h3 v-if="!props.floatingMode">AI Usage</h3>
 
     <div class="controls">
       <label class="field">
@@ -73,7 +77,7 @@ async function loadUsage() {
     </div>
   </section>
 
-  <section v-else class="panel empty">
+  <section v-else class="panel empty" :class="{ 'floating-mode': props.floatingMode }">
     Load a workspace first.
   </section>
 </template>
@@ -84,6 +88,13 @@ async function loadUsage() {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-3);
   padding: var(--space-4);
+}
+
+.panel.floating-mode {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: var(--space-2);
 }
 
 .controls {

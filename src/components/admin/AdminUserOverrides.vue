@@ -4,6 +4,10 @@ import { adminAccessStore, type EditableEntitlements } from '@/stores/adminAcces
 import { featureKeys, limitKeys, type FeatureKey, type LimitKey } from '@/lib/entitlementKeys'
 import { store } from '@/store'
 
+const props = withDefaults(defineProps<{ floatingMode?: boolean }>(), {
+  floatingMode: false,
+})
+
 const selectedUserId = ref<string | null>(null)
 const localOverride = reactive<EditableEntitlements>({
   enabled: true,
@@ -112,9 +116,9 @@ function setLimit(key: LimitKey, value: string) {
 </script>
 
 <template>
-  <section class="panel" v-if="hasWorkspace">
-    <h3>User Overrides</h3>
-    <p class="sub">Select a member to create/update/remove per-user overrides.</p>
+  <section class="panel" :class="{ 'floating-mode': props.floatingMode }" v-if="hasWorkspace">
+    <h3 v-if="!props.floatingMode">User Overrides</h3>
+    <p v-if="!props.floatingMode" class="sub">Select a member to create/update/remove per-user overrides.</p>
 
     <div class="members-grid">
       <div class="member-list">
@@ -131,11 +135,11 @@ function setLimit(key: LimitKey, value: string) {
       </div>
 
       <div class="editor" v-if="selectedUserId">
-        <h4>Edit override</h4>
+        <h4 v-if="!props.floatingMode">Edit override</h4>
         <p class="sub">User: {{ selectedUserId }}</p>
 
         <div class="field-group">
-          <h5>Features</h5>
+          <h5 v-if="!props.floatingMode">Features</h5>
           <label v-for="key in featureKeys" :key="key" class="field checkbox-row compact">
             <input type="checkbox" :checked="localOverride.features[key]" @change="setFeature(key, ($event.target as HTMLInputElement).checked)" />
             <span>{{ key }}</span>
@@ -143,7 +147,7 @@ function setLimit(key: LimitKey, value: string) {
         </div>
 
         <div class="field-group">
-          <h5>Limits</h5>
+          <h5 v-if="!props.floatingMode">Limits</h5>
           <label v-for="key in limitKeys" :key="key" class="field compact">
             <span>{{ key }}</span>
             <input
@@ -165,7 +169,7 @@ function setLimit(key: LimitKey, value: string) {
     </div>
   </section>
 
-  <section v-else class="panel empty">
+  <section v-else class="panel empty" :class="{ 'floating-mode': props.floatingMode }">
     Load a workspace first.
   </section>
 </template>
@@ -176,6 +180,13 @@ function setLimit(key: LimitKey, value: string) {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-3);
   padding: var(--space-4);
+}
+
+.panel.floating-mode {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: var(--space-2);
 }
 
 .sub {

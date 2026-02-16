@@ -84,11 +84,6 @@ const selectTemplate = (item: NodeTemplate) => {
 
 <template>
   <section class="graph-add-window">
-    <header class="panel-header">
-      <h3>Add Node</h3>
-      <button class="close-btn" type="button" @click="emit('close')">x</button>
-    </header>
-
     <div class="catalog-tabs">
       <button class="ghost-btn" :class="{ active: tab === 'devices' }" type="button" @click="tab = 'devices'">
         Devices
@@ -120,26 +115,9 @@ const selectTemplate = (item: NodeTemplate) => {
 .graph-add-window {
   display: grid;
   gap: var(--space-3);
-}
-
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.panel-header h3 {
-  margin: 0;
-}
-
-.close-btn {
-  border: 1px solid var(--border-default);
-  background: var(--surface-2);
-  color: var(--text-secondary);
-  border-radius: var(--radius-2);
-  width: 30px;
-  height: 30px;
-  cursor: pointer;
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
 }
 
 .catalog-tabs {
@@ -173,8 +151,6 @@ const selectTemplate = (item: NodeTemplate) => {
 .catalog-list {
   display: grid;
   gap: var(--space-2);
-  max-height: 360px;
-  overflow: auto;
 }
 
 .catalog-item {

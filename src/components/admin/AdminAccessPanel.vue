@@ -8,6 +8,10 @@ import AdminUsage from './AdminUsage.vue'
 
 type AdminTab = 'workspace' | 'users' | 'usage'
 
+const props = withDefaults(defineProps<{ floatingMode?: boolean }>(), {
+  floatingMode: false,
+})
+
 const activeTab = ref<AdminTab>('workspace')
 const workspaceInput = ref('')
 adminAccessStore.initializeWorkspaceFromAuthContext()
@@ -66,9 +70,8 @@ async function onTabChange(tab: AdminTab) {
 </script>
 
 <template>
-  <section class="admin-access">
-    <header class="admin-header">
-      <h2>Admin Access</h2>
+  <section class="admin-access" :class="{ 'floating-mode': props.floatingMode }">
+    <header v-if="!props.floatingMode" class="admin-header">
       <p>Manage workspace access, per-user overrides, and AI usage.</p>
     </header>
 
@@ -89,9 +92,9 @@ async function onTabChange(tab: AdminTab) {
       <button :class="{ active: activeTab === 'usage' }" @click="onTabChange('usage')">AI Usage</button>
     </nav>
 
-    <AdminWorkspaceAccess v-if="activeTab === 'workspace'" />
-    <AdminUserOverrides v-else-if="activeTab === 'users'" />
-    <AdminUsage v-else />
+    <AdminWorkspaceAccess v-if="activeTab === 'workspace'" :floating-mode="props.floatingMode" />
+    <AdminUserOverrides v-else-if="activeTab === 'users'" :floating-mode="props.floatingMode" />
+    <AdminUsage v-else :floating-mode="props.floatingMode" />
   </section>
 </template>
 
@@ -101,6 +104,12 @@ async function onTabChange(tab: AdminTab) {
   gap: var(--space-4);
   height: 100%;
   overflow: auto;
+  min-height: 0;
+}
+
+.admin-access.floating-mode {
+  gap: var(--space-3);
+  padding: var(--space-2);
 }
 
 .admin-header h2 {

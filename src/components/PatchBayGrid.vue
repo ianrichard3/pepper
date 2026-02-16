@@ -5,6 +5,9 @@ import { windowManager } from '@/stores/windowManager'
 import { strings } from '../ui/strings'
 
 const t = strings
+const props = withDefaults(defineProps<{ floatingMode?: boolean }>(), {
+  floatingMode: false,
+})
 const nodes = computed(() => store.patchbayNodes)
 const gridSearchQuery = ref('')
 
@@ -99,7 +102,7 @@ watch(() => store.patchbayFocusId, async (focusId) => {
 </script>
 
 <template>
-  <div class="main-container" :class="{ 'selection-mode': store.selectionMode }">
+  <div class="main-container" :class="{ 'selection-mode': store.selectionMode, 'floating-mode': props.floatingMode }">
     <div class="top-controls">
       <div v-if="store.selectionMode" class="selection-banner">
         <span>{{ selectionBannerText }}</span>
@@ -191,6 +194,15 @@ watch(() => store.patchbayFocusId, async (focusId) => {
   border: 1px solid var(--border-default);
   box-shadow: var(--shadow-1);
   overflow: auto;
+  min-height: 0;
+}
+
+.main-container.floating-mode {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  padding: var(--space-3);
 }
 
 .selection-mode {

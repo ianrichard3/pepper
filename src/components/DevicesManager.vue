@@ -958,10 +958,7 @@ onMounted(() => {
   <div class="devices-container" :class="{ 'floating-mode': props.floatingMode, 'modal-only': props.modalOnly }">
     <template v-if="!props.modalOnly">
     <div class="header">
-      <div class="title-block">
-        <h2>{{ t.devices.title }}</h2>
-        <span v-if="isLoading" class="status-pill">{{ t.devices.saving }}</span>
-      </div>
+      
       <div class="header-actions">
         <input
           v-model="searchQuery"
@@ -1226,8 +1223,8 @@ onMounted(() => {
       :class="props.modalOnly ? 'modal-inline-host' : 'modal-overlay'"
       @click="!props.modalOnly && closeAddModal()"
     >
-      <div class="modal-content small add-device-modal" @click.stop>
-        <div class="modal-header">
+      <div class="modal-content small add-device-modal" :class="{ 'floating-modal': props.modalOnly }" @click.stop>
+        <div v-if="!props.modalOnly" class="modal-header">
           <h2>{{ isEditing ? t.devices.editDevice : t.devices.addNewDevice }}</h2>
           <button class="close-btn" @click="closeAddModal">{{ t.app.closeSymbol }}</button>
         </div>
@@ -1465,7 +1462,9 @@ onMounted(() => {
 }
 
 .devices-container.modal-only {
-  overflow: visible;
+  height: 100%;
+  overflow: hidden;
+  padding: 0;
 }
 
 .header {
@@ -1770,6 +1769,22 @@ onMounted(() => {
   max-width: 520px;
 }
 
+.modal-content.floating-modal {
+  width: 100%;
+  max-width: none;
+  max-height: 100%;
+  height: 100%;
+  border: none;
+  box-shadow: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.modal-content.floating-modal .add-device-tabs {
+  padding: var(--space-2) 0;
+  background: transparent;
+}
+
 .modal-content.add-device-modal .form-content {
   flex: 1;
   overflow-y: auto;
@@ -1777,9 +1792,19 @@ onMounted(() => {
   min-height: 0;
 }
 
+.modal-content.floating-modal .form-content {
+  padding: var(--space-3) 0;
+}
+
 .manual-form,
 .ai-form {
   padding: var(--space-4);
+}
+
+.modal-content.floating-modal .manual-form,
+.modal-content.floating-modal .ai-form,
+.modal-content.floating-modal .catalog-form {
+  padding: 0;
 }
 
 .catalog-form {
@@ -1805,6 +1830,11 @@ onMounted(() => {
   gap: var(--space-2);
   max-height: 260px;
   overflow: auto;
+}
+
+.modal-content.floating-modal .catalog-results {
+  max-height: none;
+  overflow: visible;
 }
 
 .catalog-result-card {
@@ -1873,6 +1903,11 @@ onMounted(() => {
   background-color: var(--surface-2);
   display: flex;
   gap: var(--space-2);
+}
+
+.modal-content.floating-modal .form-footer {
+  padding: var(--space-3) 0;
+  background: transparent;
 }
 
 .form-footer .save-btn {
@@ -2068,6 +2103,11 @@ onMounted(() => {
   max-height: 200px;
   overflow-y: auto;
   padding-right: 4px;
+}
+
+.modal-content.floating-modal .ports-editor {
+  max-height: none;
+  overflow: visible;
 }
 
 .ports-section {

@@ -9,10 +9,6 @@ const props = defineProps<{
   parentWindowId: string
 }>()
 
-const emit = defineEmits<{
-  (e: 'close'): void
-}>()
-
 const t = strings
 
 const node = computed(() => store.patchbayNodes.find((item) => item.id === props.patchbayId) || null)
@@ -36,7 +32,6 @@ const openLinkSearch = () => {
 
 <template>
   <section v-if="node" class="detail-window">
-    <h2 class="selectable-detail-text">{{ t.patchbay.patchPointTitle(node.id) }}</h2>
     <p class="selectable-detail-text"><strong>{{ t.patchbay.nameLabel }}:</strong> {{ node.name }}</p>
     <p class="selectable-detail-text"><strong>{{ t.patchbay.typeLabel }}:</strong> {{ node.type }}</p>
     <p class="selectable-detail-text"><strong>{{ t.patchbay.descriptionLabel }}:</strong> {{ node.description }}</p>
@@ -59,12 +54,9 @@ const openLinkSearch = () => {
         <button class="link-btn" @click="openLinkSearch">{{ t.patchbay.linkDeviceAction }}</button>
       </div>
     </div>
-
-    <button class="close-btn-main" @click="emit('close')">{{ t.patchbay.close }}</button>
   </section>
   <section v-else class="detail-window">
     <p class="selectable-detail-text">Patch point not found.</p>
-    <button class="close-btn-main" @click="emit('close')">{{ t.patchbay.close }}</button>
   </section>
 </template>
 
@@ -72,6 +64,9 @@ const openLinkSearch = () => {
 .detail-window {
   display: grid;
   gap: var(--space-3);
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
 }
 
 .connection-status {
@@ -90,8 +85,7 @@ const openLinkSearch = () => {
 }
 
 .unlink-btn,
-.link-btn,
-.close-btn-main {
+.link-btn {
   width: fit-content;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-2);
@@ -105,7 +99,7 @@ const openLinkSearch = () => {
 }
 
 .link-btn,
-.close-btn-main {
+.link-btn {
   background: var(--surface-2);
   color: var(--text-secondary);
 }

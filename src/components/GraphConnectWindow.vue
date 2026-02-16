@@ -24,10 +24,7 @@ const selectPort = (portId: string) => {
 
 <template>
   <section class="graph-connect-window">
-    <header class="panel-header">
-      <h3 class="selectable-detail-text">Connect to {{ nodeTitle }}</h3>
-      <button class="close-btn" type="button" @click="emit('close')">x</button>
-    </header>
+    <h3 class="selectable-detail-text">Connect to {{ nodeTitle }}</h3>
 
     <p class="help-text selectable-detail-text">Select destination port. Occupied ports are conflict candidates.</p>
 
@@ -52,26 +49,13 @@ const selectPort = (portId: string) => {
 .graph-connect-window {
   display: grid;
   gap: var(--space-3);
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
 }
 
-.panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.panel-header h3 {
+.graph-connect-window h3 {
   margin: 0;
-}
-
-.close-btn {
-  border: 1px solid var(--border-default);
-  background: var(--surface-2);
-  color: var(--text-secondary);
-  border-radius: var(--radius-2);
-  width: 30px;
-  height: 30px;
-  cursor: pointer;
 }
 
 .help-text {
@@ -82,8 +66,6 @@ const selectPort = (portId: string) => {
 .ports-list {
   display: grid;
   gap: var(--space-2);
-  max-height: 380px;
-  overflow: auto;
 }
 
 .port-item {

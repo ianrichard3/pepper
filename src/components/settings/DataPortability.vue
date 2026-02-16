@@ -505,9 +505,9 @@ function toTitleCase(value: string): string {
 </script>
 
 <template>
-  <section class="portability-page">
+  <section class="portability-page" :class="{ 'floating-mode': props.floatingMode }">
     <header class="portability-header">
-      <div>
+      <div v-if="!props.floatingMode">
         <h2>{{ t.portability.title }}</h2>
         <p>{{ t.portability.subtitle }}</p>
       </div>
@@ -516,7 +516,7 @@ function toTitleCase(value: string): string {
 
     <div class="portability-grid">
       <article class="panel">
-        <h3>{{ t.portability.exportTitle }}</h3>
+        <h3 v-if="!props.floatingMode">{{ t.portability.exportTitle }}</h3>
 
         <label class="field-label" for="export-scope">Scope</label>
         <select id="export-scope" v-model="exportForm.scope" class="input">
@@ -580,7 +580,7 @@ function toTitleCase(value: string): string {
       </article>
 
       <article class="panel import-panel">
-        <h3>{{ t.portability.importTitle }}</h3>
+        <h3 v-if="!props.floatingMode">{{ t.portability.importTitle }}</h3>
 
         <div class="steps">
           <span :class="{ active: importStep === 'select' }">1 Select</span>
@@ -798,6 +798,12 @@ function toTitleCase(value: string): string {
   gap: var(--space-4);
   height: 100%;
   overflow: auto;
+  min-height: 0;
+}
+
+.portability-page.floating-mode {
+  gap: var(--space-2);
+  padding: var(--space-2);
 }
 
 .portability-header {
@@ -805,6 +811,11 @@ function toTitleCase(value: string): string {
   justify-content: space-between;
   gap: var(--space-4);
   align-items: flex-start;
+}
+
+.portability-page.floating-mode .portability-header {
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .portability-header h2 {
@@ -835,13 +846,31 @@ function toTitleCase(value: string): string {
   min-height: 0;
 }
 
+.portability-page.floating-mode .panel {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: var(--space-2);
+}
+
 .import-panel {
   overflow: auto;
+}
+
+.portability-page.floating-mode .import-panel {
+  overflow: visible;
 }
 
 .panel h3 {
   margin: 0;
   font-size: 1.4rem;
+}
+
+.portability-page.floating-mode h2,
+.portability-page.floating-mode h3,
+.portability-page.floating-mode h4,
+.portability-page.floating-mode h5 {
+  display: none;
 }
 
 .field-label {

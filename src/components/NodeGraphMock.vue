@@ -1434,10 +1434,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="node-view">
+  <section class="node-view" :class="{ 'floating-mode': props.floatingMode }">
     <header class="node-toolbar">
       <div class="node-toolbar-copy">
-        <h2>Routing Canvas</h2>
         <p>Ctrl/Cmd+click to multi-select nodes. Middle-click drag pans. Click a port in node popup to start cable routing.</p>
       </div>
       <div class="persistence-status" :class="{ error: !!persistence.error.value, readonly: persistence.readOnly.value }">
@@ -1679,6 +1678,10 @@ onBeforeUnmount(() => {
   gap: var(--space-3);
 }
 
+.node-view.floating-mode {
+  gap: var(--space-2);
+}
+
 .node-toolbar {
   display: flex;
   align-items: center;
@@ -1688,6 +1691,13 @@ onBeforeUnmount(() => {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-3);
   background: rgba(31, 28, 24, 0.9);
+}
+
+.node-view.floating-mode .node-toolbar {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: var(--space-2) var(--space-1);
 }
 
 .node-toolbar-copy h2 {

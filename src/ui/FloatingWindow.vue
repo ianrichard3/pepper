@@ -7,6 +7,8 @@ const props = defineProps<{
   rect: WindowRect
   state: WindowState
   zIndex: number
+  variant?: 'tool' | 'utility' | 'confirm'
+  showTitle?: boolean
   minWidth?: number
   minHeight?: number
 }>()
@@ -22,6 +24,8 @@ const emit = defineEmits<{
 
 const minWidth = computed(() => props.minWidth ?? 300)
 const minHeight = computed(() => props.minHeight ?? 180)
+const variant = computed(() => props.variant ?? 'tool')
+const showTitle = computed(() => props.showTitle ?? true)
 
 const dragState = ref<null | {
   startX: number
@@ -126,9 +130,10 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section class="floating-window" :style="styleObject" @pointerdown="emit('focus')">
+  <section class="floating-window" :class="[`variant-${variant}`]" :style="styleObject" @pointerdown="emit('focus')">
     <header class="floating-window-header" @pointerdown="onHeaderPointerDown" @dblclick="emit('toggle-maximize')">
-      <strong>{{ title }}</strong>
+      <strong v-if="showTitle" class="window-title">{{ title }}</strong>
+      <span v-else class="window-title-spacer" aria-hidden="true"></span>
       <div class="window-actions">
         <button class="window-btn" type="button" @click="emit('toggle-minimize')">
           {{ state === 'minimized' ? '+' : '-' }}
@@ -166,6 +171,8 @@ onBeforeUnmount(() => {
   box-shadow: 0 16px 42px rgba(0, 0, 0, 0.4);
   color: var(--text-primary);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .floating-window-header {
@@ -187,6 +194,16 @@ onBeforeUnmount(() => {
 .window-actions {
   display: inline-flex;
   gap: 6px;
+  margin-left: auto;
+}
+
+.window-title {
+  line-height: 1.2;
+}
+
+.window-title-spacer {
+  width: 1px;
+  height: 1px;
 }
 
 .window-btn {
@@ -206,8 +223,17 @@ onBeforeUnmount(() => {
 
 .floating-window-body {
   height: calc(100% - 42px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.floating-window.variant-tool .floating-window-body {
+  padding: 0;
+}
+
+.floating-window.variant-utility .floating-window-body,
+.floating-window.variant-confirm .floating-window-body {
   padding: 10px;
-  overflow: auto;
 }
 
 .resize-handle {

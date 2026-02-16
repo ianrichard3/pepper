@@ -4,6 +4,10 @@ import { adminAccessStore } from '@/stores/adminAccess'
 import { featureKeys, limitKeys, type LimitKey } from '@/lib/entitlementKeys'
 import { store } from '@/store'
 
+const props = withDefaults(defineProps<{ floatingMode?: boolean }>(), {
+  floatingMode: false,
+})
+
 const allowlistedDraft = ref(false)
 const allowlistReason = ref('')
 const limitDrafts = reactive<Record<LimitKey, string>>({
@@ -88,8 +92,8 @@ async function saveWorkspaceAccess() {
 </script>
 
 <template>
-  <section class="panel" v-if="hasEntitlements">
-    <h3>Workspace Access</h3>
+  <section class="panel" :class="{ 'floating-mode': props.floatingMode }" v-if="hasEntitlements">
+    <h3 v-if="!props.floatingMode">Workspace Access</h3>
 
     <label class="field checkbox-row">
       <input
@@ -121,7 +125,7 @@ async function saveWorkspaceAccess() {
     </label>
 
     <div class="field-group">
-      <h4>Features</h4>
+      <h4 v-if="!props.floatingMode">Features</h4>
       <label v-for="key in featureKeys" :key="key" class="field checkbox-row compact">
         <input
           type="checkbox"
@@ -133,7 +137,7 @@ async function saveWorkspaceAccess() {
     </div>
 
     <div class="field-group">
-      <h4>Limits</h4>
+      <h4 v-if="!props.floatingMode">Limits</h4>
       <label v-for="key in limitKeys" :key="key" class="field compact">
         <span>{{ key }}</span>
         <input v-model="limitDrafts[key]" type="number" min="0" step="1" placeholder="(unset)" />
@@ -145,7 +149,7 @@ async function saveWorkspaceAccess() {
     </button>
   </section>
 
-  <section v-else class="panel empty">
+  <section v-else class="panel empty" :class="{ 'floating-mode': props.floatingMode }">
     Load a workspace to edit access settings.
   </section>
 </template>
@@ -156,6 +160,13 @@ async function saveWorkspaceAccess() {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-3);
   padding: var(--space-4);
+}
+
+.panel.floating-mode {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: var(--space-2);
 }
 
 .empty {

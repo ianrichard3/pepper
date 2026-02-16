@@ -23,7 +23,7 @@ export const strings = {
   nav: {
     patchbay: 'Patchbay',
     devices: 'Devices',
-    nodeView: 'Graph',
+    nodeView: 'Routing',
     portability: 'Portability',
   },
   portability: {

@@ -28,8 +28,6 @@ const selectDeviceForLink = async (deviceId: number, portId: string) => {
 
 <template>
   <section class="link-search-window">
-    <h2 class="selectable-detail-text">{{ t.patchbay.linkDeviceTitle(patchbayId) }}</h2>
-
     <input
       v-model="searchQuery"
       :placeholder="t.patchbay.searchDevicesPlaceholder"
@@ -64,6 +62,9 @@ const selectDeviceForLink = async (deviceId: number, portId: string) => {
 .link-search-window {
   display: grid;
   gap: var(--space-3);
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
 }
 
 .search-input {
@@ -77,8 +78,6 @@ const selectDeviceForLink = async (deviceId: number, portId: string) => {
 .device-search-list {
   display: grid;
   gap: var(--space-3);
-  max-height: 56vh;
-  overflow: auto;
 }
 
 .search-device-item {

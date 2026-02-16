@@ -76,7 +76,7 @@ const toolDefinitions = computed(() => {
   const base: Array<{ id: ToolWindowKind; label: string; icon: string; route: string | null; hidden?: boolean }> = [
     { id: 'patchbay', label: t.nav.patchbay, icon: 'PB', route: null },
     { id: 'devices', label: t.nav.devices, icon: 'DV', route: null },
-    { id: 'graph', label: t.nav.nodeView, icon: 'GR', route: null },
+    { id: 'graph', label: t.nav.nodeView, icon: 'RT', route: null },
     { id: 'portability', label: t.nav.portability, icon: 'EX', route: '/settings/portability' },
     { id: 'admin', label: 'Admin', icon: 'AD', route: '/admin/access', hidden: !canAccessAdmin.value },
   ]
@@ -356,6 +356,26 @@ const windowComponentKey = (window: ManagedWindow) => {
   return 'unknown'
 }
 
+const windowVariant = (window: ManagedWindow): 'tool' | 'utility' | 'confirm' => {
+  if (
+    window.kind === 'patchbay' ||
+    window.kind === 'devices' ||
+    window.kind === 'graph' ||
+    window.kind === 'portability' ||
+    window.kind === 'admin'
+  ) {
+    return 'tool'
+  }
+  if (
+    window.kind === 'devices-delete-confirm' ||
+    window.kind === 'patchbay-overwrite-confirm' ||
+    window.kind === 'portability-replace-confirm'
+  ) {
+    return 'confirm'
+  }
+  return 'utility'
+}
+
 const payloadFunction = <T extends (...args: any[]) => unknown>(window: ManagedWindow, key: string): T | undefined => {
   const candidate = window.payload[key]
   if (typeof candidate !== 'function') return undefined
@@ -517,9 +537,11 @@ onBeforeUnmount(() => {
                 v-for="window in desktopWindows"
                 :key="window.id"
                 :title="window.title"
+                :show-title="false"
                 :rect="window.rect"
                 :state="window.state"
                 :z-index="window.zIndex"
+                :variant="windowVariant(window)"
                 @focus="windowManager.focusWindow(window.id)"
                 @close="closeWindow(window)"
                 @move="({ x, y }) => windowManager.moveWindow(window.id, x, y)"
@@ -527,7 +549,7 @@ onBeforeUnmount(() => {
                 @toggle-minimize="toggleMinimize(window)"
                 @toggle-maximize="toggleMaximize(window)"
               >
-                <PatchBayGrid v-if="windowComponentKey(window) === 'patchbay'" />
+                <PatchBayGrid v-if="windowComponentKey(window) === 'patchbay'" floating-mode />
                 <DevicesManager
                   v-else-if="windowComponentKey(window) === 'devices'"
                   floating-mode
@@ -544,7 +566,7 @@ onBeforeUnmount(() => {
                   floating-mode
                   :parent-window-id="window.id"
                 />
-                <AdminAccessPanel v-else-if="windowComponentKey(window) === 'admin'" />
+                <AdminAccessPanel v-else-if="windowComponentKey(window) === 'admin'" floating-mode />
                 <DeviceDetailWindow
                   v-else-if="windowComponentKey(window) === 'device-detail'"
                   :device-id="Number(window.payload.deviceId || 0)"
