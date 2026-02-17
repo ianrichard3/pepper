@@ -25,6 +25,8 @@ export interface Device {
   type: string;
   category: string;
   tags?: string[];
+  recommendedUses?: string | null;
+  avoidUses?: string | null;
   ports: DevicePort[];
   imageUrl?: string | null;
   imageUpdatedAt?: string | null;
@@ -97,6 +99,8 @@ function apiDeviceToDevice(apiDevice: ApiDevice): Device {
     type: apiDevice.type,
     category: apiDevice.category || inferCategoryFromType(apiDevice.type),
     tags: apiDevice.tags || [],
+    recommendedUses: apiDevice.recommended_uses ?? null,
+    avoidUses: apiDevice.avoid_uses ?? null,
     ports: apiDevice.ports.map(apiPortToDevicePort),
     imageUrl: apiDevice.image_url,
     imageUpdatedAt: apiDevice.image_updated_at,
@@ -572,6 +576,8 @@ export const store = reactive({
     type: string
     category: string
     tags?: string[]
+    recommendedUses?: string | null
+    avoidUses?: string | null
     ports: DevicePort[]
     catalogSource?: DeviceCatalogSource | null
   }): Promise<Device> {
@@ -581,6 +587,8 @@ export const store = reactive({
         type: device.type,
         category: device.category,
         tags: device.tags || [],
+        recommended_uses: device.recommendedUses ?? null,
+        avoid_uses: device.avoidUses ?? null,
         ports: device.ports.map(p => ({
           label: p.label,
           type: p.type,
@@ -609,13 +617,26 @@ export const store = reactive({
     }
   },
 
-  async updateDevice(id: number, payload: { name: string; type: string; category: string; tags?: string[]; ports: DevicePort[] }): Promise<Device> {
+  async updateDevice(
+    id: number,
+    payload: {
+      name: string
+      type: string
+      category: string
+      tags?: string[]
+      recommendedUses?: string | null
+      avoidUses?: string | null
+      ports: DevicePort[]
+    }
+  ): Promise<Device> {
     try {
       const apiDevice = await api.updateDevice(id, {
         name: payload.name,
         type: payload.type,
         category: payload.category,
         tags: payload.tags || [],
+        recommended_uses: payload.recommendedUses ?? null,
+        avoid_uses: payload.avoidUses ?? null,
         ports: payload.ports.map(p => ({
           id: p.id || undefined,
           label: p.label,

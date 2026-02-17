@@ -25,6 +25,8 @@ export interface ApiDevice {
   type: string
   category: string
   tags?: string[]
+  recommended_uses?: string | null
+  avoid_uses?: string | null
   ports: ApiPort[]
   image_url?: string | null
   image_updated_at?: string | null
@@ -138,6 +140,8 @@ export interface ApiDeviceCreate {
   type?: string
   category?: string
   tags?: string[]
+  recommended_uses?: string | null
+  avoid_uses?: string | null
   catalog_source?: {
     provider: string
     external_id: string
@@ -156,6 +160,8 @@ export interface ApiDeviceUpdate {
   type?: string
   category?: string
   tags?: string[]
+  recommended_uses?: string | null
+  avoid_uses?: string | null
   ports: Array<{
     id?: string
     label: string
@@ -265,6 +271,68 @@ export interface AdminWorkspaceMember {
   last_name?: string | null
   email?: string | null
   [key: string]: unknown
+}
+
+export interface ApiRecommendationRequest {
+  text: string
+  limit?: number
+  min_score?: number
+  max_hops?: number
+}
+
+export interface ApiRecommendationConnection {
+  a_type: 'device_port' | 'patchbay_point'
+  a_id: string
+  b_type: 'device_port' | 'patchbay_point'
+  b_id: string
+  action: 'create' | 'existing'
+}
+
+export interface ApiRecommendationPlan {
+  id: string
+  score: number
+  score_breakdown: {
+    feasibility: number
+    intent_match: number
+    use_match: number
+    avoid_penalty: number
+    chain_completeness: number
+  }
+  stages: Array<{
+    stage: 'source' | 'patch_panel' | 'preamp' | 'fx' | 'destination' | 'daw'
+    label: string
+    device_id?: number | null
+    device_name?: string | null
+    port_id?: string | null
+    patchbay_point_id?: number | null
+  }>
+  devices: Array<{
+    device_id: number
+    device_name: string
+    why_use?: string | null
+    why_not?: string | null
+  }>
+  connections: ApiRecommendationConnection[]
+  instructions: string[]
+  why: string[]
+}
+
+export interface ApiRecommendationResponse {
+  intent: Record<string, unknown>
+  plans: ApiRecommendationPlan[]
+}
+
+export interface ApiRecommendationPreviewResponse {
+  ok: boolean
+  conflicts: Array<{
+    index: number
+    message: string
+  }>
+}
+
+export interface ApiRecommendationApplyResponse {
+  created_connection_ids: number[]
+  skipped_existing: number
 }
 
 export type FetchImageResult =
@@ -408,6 +476,27 @@ export const api = {
     return requestJson<ApiDevice>(`/devices/${deviceId}`, {
       method: 'PUT',
       body: JSON.stringify(payload),
+    })
+  },
+
+  async recommendConnectionsFromIntent(payload: ApiRecommendationRequest): Promise<ApiRecommendationResponse> {
+    return requestJson<ApiRecommendationResponse>('/api/recommendations/from-intent', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async previewRecommendationPlan(plan: ApiRecommendationPlan): Promise<ApiRecommendationPreviewResponse> {
+    return requestJson<ApiRecommendationPreviewResponse>('/api/recommendations/preview', {
+      method: 'POST',
+      body: JSON.stringify({ plan }),
+    })
+  },
+
+  async applyRecommendationPlan(plan: ApiRecommendationPlan): Promise<ApiRecommendationApplyResponse> {
+    return requestJson<ApiRecommendationApplyResponse>('/api/recommendations/apply', {
+      method: 'POST',
+      body: JSON.stringify({ plan }),
     })
   },
 

@@ -146,7 +146,17 @@ const selectedDevice = ref<Device | null>(null)
 const showAddModal = ref(false)
 const addDeviceMode = ref<'manual' | 'ai' | 'catalog'>('manual')
 const editingDeviceId = ref<number | null>(null)
-const editSnapshot = ref<{ device: { name: string; type: string; category: string; tags: string[] }; ports: DevicePort[] } | null>(null)
+const editSnapshot = ref<{
+  device: {
+    name: string
+    type: string
+    category: string
+    tags: string[]
+    recommendedUses: string
+    avoidUses: string
+  }
+  ports: DevicePort[]
+} | null>(null)
 const deleteTarget = ref<Device | null>(null)
 const DRAFT_STORAGE_KEY = 'el-riche.addDeviceDraft'
 const LEGACY_DRAFT_STORAGE_KEY = 'pepper.addDeviceDraft'
@@ -191,6 +201,8 @@ const newDevice = ref({
   category: fallbackDeviceCategory,
   type: fallbackDeviceType,
   tags: [] as string[],
+  recommendedUses: '',
+  avoidUses: '',
 })
 
 const newPorts = ref<Array<{ id?: string; label: string; type: 'Input' | 'Output' | 'Other'; patchbayId?: number | null }>>([])
@@ -429,6 +441,8 @@ const applyCatalogItemToForm = (item: ApiCatalogItemDetails) => {
     category,
     type,
     tags: extractCatalogTags(item),
+    recommendedUses: '',
+    avoidUses: '',
   }
   newPorts.value = buildPortsFromCatalog(item)
   selectedCatalogSource.value = {
@@ -488,6 +502,8 @@ const loadDraft = () => {
         category: normalizeDeviceCategory(String(draft.device.category ?? ''), String(draft.device.type ?? '')),
         type: normalizeDeviceType(String(draft.device.type ?? fallbackDeviceType), String(draft.device.category ?? fallbackDeviceCategory)),
         tags: Array.isArray(draft.device.tags) ? draft.device.tags.map((tag: unknown) => String(tag).trim()).filter(Boolean) : [],
+        recommendedUses: String(draft.device.recommendedUses ?? ''),
+        avoidUses: String(draft.device.avoidUses ?? ''),
       }
     }
     if (Array.isArray(draft?.ports)) {
@@ -511,7 +527,14 @@ const clearDraft = () => {
 }
 
 const resetAddForm = (clear = false) => {
-  newDevice.value = { name: '', category: fallbackDeviceCategory, type: fallbackDeviceType, tags: [] }
+  newDevice.value = {
+    name: '',
+    category: fallbackDeviceCategory,
+    type: fallbackDeviceType,
+    tags: [],
+    recommendedUses: '',
+    avoidUses: '',
+  }
   newPorts.value = []
   addDeviceMode.value = 'manual'
   aiStatusMessage.value = null
@@ -579,6 +602,8 @@ const openEditModal = (device: Device) => {
       category: normalizeDeviceCategory(device.category, device.type),
       type: normalizeDeviceType(device.type, device.category),
       tags: [...(device.tags || [])],
+      recommendedUses: device.recommendedUses || '',
+      avoidUses: device.avoidUses || '',
     },
     ports: device.ports.map(port => ({ ...port })),
   }
@@ -587,6 +612,8 @@ const openEditModal = (device: Device) => {
     category: normalizeDeviceCategory(device.category, device.type),
     type: normalizeDeviceType(device.type, device.category),
     tags: [...(device.tags || [])],
+    recommendedUses: device.recommendedUses || '',
+    avoidUses: device.avoidUses || '',
   }
   newPorts.value = device.ports.map(port => ({
     id: port.id,
@@ -754,6 +781,8 @@ const handleAiFileChange = async (event: Event) => {
       category: normalizeDeviceCategory(device.category, device.type),
       type: normalizeDeviceType(device.type, device.category),
       tags: [],
+      recommendedUses: '',
+      avoidUses: '',
     }
     newPorts.value = device.ports.map((port) => ({
       label: port.label,
@@ -814,6 +843,8 @@ const handleAddDevice = async () => {
         category: newDevice.value.category,
         type: newDevice.value.type,
         tags: newDevice.value.tags,
+        recommendedUses: newDevice.value.recommendedUses || null,
+        avoidUses: newDevice.value.avoidUses || null,
         ports,
       })
       deviceId = updated.id
@@ -828,6 +859,8 @@ const handleAddDevice = async () => {
         category: newDevice.value.category,
         type: newDevice.value.type,
         tags: newDevice.value.tags,
+        recommendedUses: newDevice.value.recommendedUses || null,
+        avoidUses: newDevice.value.avoidUses || null,
         ports,
         catalogSource: selectedCatalogSource.value
           ? {
@@ -1325,6 +1358,22 @@ onMounted(() => {
               <input
                 v-model="tagsInput"
                 :placeholder="t.devices.tagsPlaceholder || 'condition:used, connectivity:usb-c, phantom-power'"
+              />
+            </div>
+            <div class="form-group">
+              <label>Recommended Uses</label>
+              <textarea
+                v-model="newDevice.recommendedUses"
+                rows="3"
+                placeholder="When this device is a good choice (recording vocals, clean gain, low noise, etc.)"
+              />
+            </div>
+            <div class="form-group">
+              <label>Avoid Uses</label>
+              <textarea
+                v-model="newDevice.avoidUses"
+                rows="3"
+                placeholder="When this device should be avoided (phantom-sensitive ribbons, high-latency chains, etc.)"
               />
             </div>
             <p v-if="selectedCatalogSource && newPorts.length === 0" class="help-text">
@@ -2052,7 +2101,8 @@ onMounted(() => {
 }
 
 .form-group input,
-.form-group select {
+.form-group select,
+.form-group textarea {
   padding: 8px;
   background-color: var(--surface-1);
   border: 1px solid var(--border-default);

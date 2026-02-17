@@ -4,6 +4,7 @@ import GraphView from '@/components/GraphView.vue'
 import { graphStore } from '@/stores/graph'
 import { store } from '@/store'
 import type { GraphEndpoint } from '@/types/graph'
+import { api, type ApiRecommendationPlan } from '@/lib/api'
 
 const searchQuery = ref('')
 const onlyConnected = ref(false)
@@ -27,6 +28,12 @@ const filteredNodes = computed(() => {
 
 const selectedNode = computed(() => graphStore.selectedNode)
 const selectedEdge = computed(() => graphStore.selectedEdge)
+const recommendationPrompt = ref('')
+const recommendationLoading = ref(false)
+const recommendationError = ref('')
+const recommendationPlans = ref<ApiRecommendationPlan[]>([])
+const selectedPlanId = ref<string | null>(null)
+const previewByPlanId = ref<Record<string, string>>({})
 
 const connectCandidate = computed(() => {
   if (!selectedNode.value?.endpoint) return null
@@ -65,6 +72,54 @@ const openDeviceDetail = () => {
 }
 
 const endpointLabel = (endpoint: GraphEndpoint) => `${endpoint.type}:${endpoint.id}`
+
+const selectedPlan = computed(() => {
+  return recommendationPlans.value.find((plan) => plan.id === selectedPlanId.value) || null
+})
+
+const requestRecommendations = async () => {
+  const text = recommendationPrompt.value.trim()
+  if (!text) return
+  recommendationLoading.value = true
+  recommendationError.value = ''
+  previewByPlanId.value = {}
+  try {
+    const result = await api.recommendConnectionsFromIntent({ text, limit: 3, min_score: 0.55, max_hops: 6 })
+    recommendationPlans.value = result.plans || []
+    selectedPlanId.value = recommendationPlans.value[0]?.id || null
+    if (!recommendationPlans.value.length) {
+      recommendationError.value = 'No feasible plans found for this workspace state.'
+    }
+  } catch (err: any) {
+    recommendationError.value = err?.message || 'Failed to generate recommendations.'
+  } finally {
+    recommendationLoading.value = false
+  }
+}
+
+const previewSelectedPlan = async () => {
+  if (!selectedPlan.value) return
+  try {
+    const result = await api.previewRecommendationPlan(selectedPlan.value)
+    previewByPlanId.value[selectedPlan.value.id] = result.ok
+      ? 'Ready to apply.'
+      : (result.conflicts[0]?.message || 'Plan has conflicts.')
+  } catch (err: any) {
+    previewByPlanId.value[selectedPlan.value.id] = err?.message || 'Preview failed.'
+  }
+}
+
+const applySelectedPlan = async () => {
+  if (!selectedPlan.value) return
+  try {
+    await api.applyRecommendationPlan(selectedPlan.value)
+    await graphStore.loadWorkspaceGraph()
+    await store.syncConnectionsProjectionSafe()
+    previewByPlanId.value[selectedPlan.value.id] = 'Applied successfully.'
+  } catch (err: any) {
+    previewByPlanId.value[selectedPlan.value.id] = err?.message || 'Apply failed.'
+  }
+}
 </script>
 
 <template>
@@ -128,6 +183,52 @@ const endpointLabel = (endpoint: GraphEndpoint) => `${endpoint.type}:${endpoint.
         </template>
 
         <p v-else class="muted">Select a node or edge.</p>
+
+        <hr />
+        <div class="reco-box">
+          <h4>Recommend Connections</h4>
+          <textarea
+            v-model="recommendationPrompt"
+            class="reco-input"
+            rows="3"
+            placeholder="Example: Record vocal mic through preamp + compressor into Pro Tools"
+          />
+          <button class="primary-btn" :disabled="recommendationLoading || !recommendationPrompt.trim()" @click="requestRecommendations">
+            {{ recommendationLoading ? 'Generating...' : 'Generate Plans' }}
+          </button>
+          <p v-if="recommendationError" class="hint error">{{ recommendationError }}</p>
+
+          <div v-if="recommendationPlans.length" class="reco-list">
+            <button
+              v-for="plan in recommendationPlans"
+              :key="plan.id"
+              type="button"
+              class="reco-plan"
+              :class="{ selected: selectedPlanId === plan.id }"
+              @click="selectedPlanId = plan.id"
+            >
+              <strong>{{ plan.id }}</strong>
+              <span>Score {{ plan.score.toFixed(2) }}</span>
+              <span>{{ plan.stages.map((stage) => stage.label).join(' -> ') }}</span>
+            </button>
+          </div>
+
+          <div v-if="selectedPlan" class="reco-detail">
+            <p><strong>Why</strong></p>
+            <p v-for="reason in selectedPlan.why" :key="reason" class="muted">{{ reason }}</p>
+            <p><strong>Instructions</strong></p>
+            <p v-for="step in selectedPlan.instructions" :key="step" class="muted">{{ step }}</p>
+            <p><strong>Device use notes</strong></p>
+            <p v-for="device in selectedPlan.devices" :key="device.device_id" class="muted">
+              {{ device.device_name }} · Use: {{ device.why_use || 'n/a' }} · Avoid: {{ device.why_not || 'n/a' }}
+            </p>
+            <div class="detail-actions">
+              <button class="ghost-btn" @click="previewSelectedPlan">Preview plan</button>
+              <button class="primary-btn" @click="applySelectedPlan">Apply plan</button>
+            </div>
+            <p v-if="previewByPlanId[selectedPlan.id]" class="hint">{{ previewByPlanId[selectedPlan.id] }}</p>
+          </div>
+        </div>
       </aside>
     </div>
   </section>
@@ -187,6 +288,46 @@ const endpointLabel = (endpoint: GraphEndpoint) => `${endpoint.type}:${endpoint.
   align-content: start;
   gap: var(--space-2);
   overflow: auto;
+}
+
+.reco-box {
+  display: grid;
+  gap: 8px;
+}
+
+.reco-input {
+  width: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  padding: 8px;
+}
+
+.reco-list {
+  display: grid;
+  gap: 6px;
+}
+
+.reco-plan {
+  display: grid;
+  gap: 2px;
+  text-align: left;
+  padding: 8px;
+  border-radius: var(--radius-2);
+  border: 1px solid var(--border-default);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.reco-plan.selected {
+  border-color: rgba(212, 154, 79, 0.6);
+}
+
+.reco-detail {
+  display: grid;
+  gap: 4px;
 }
 
 .connect-banner {
