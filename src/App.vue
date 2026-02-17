@@ -20,6 +20,7 @@ import DevicesAddEditWindow from './components/DevicesAddEditWindow.vue'
 import DevicesDeleteConfirmWindow from './components/DevicesDeleteConfirmWindow.vue'
 import GraphAddNodeWindow from './components/GraphAddNodeWindow.vue'
 import GraphConnectWindow from './components/GraphConnectWindow.vue'
+import GraphIntentMatchesWindow from './components/GraphIntentMatchesWindow.vue'
 import PatchbayPointDetailWindow from './components/PatchbayPointDetailWindow.vue'
 import PatchbayLinkSearchWindow from './components/PatchbayLinkSearchWindow.vue'
 import PatchbayOverwriteConfirmWindow from './components/PatchbayOverwriteConfirmWindow.vue'
@@ -30,6 +31,7 @@ import { strings } from './ui/strings'
 import { store } from './store'
 import logoUrl from './assets/el-riche-mark.svg'
 import { isAdminRole } from './lib/adminAuth'
+import type { ApiDeviceMatchItem, ApiIntent } from './lib/api'
 
 const t = strings
 const SIDEBAR_STORAGE_PREFIX = 'pepper.sidebar.v1'
@@ -352,6 +354,7 @@ const windowComponentKey = (window: ManagedWindow) => {
   if (window.kind === 'devices-delete-confirm') return 'devices-delete-confirm'
   if (window.kind === 'graph-add-node') return 'graph-add-node'
   if (window.kind === 'graph-connect-node') return 'graph-connect-node'
+  if (window.kind === 'graph-intent-matches') return 'graph-intent-matches'
   if (window.kind === 'portability-replace-confirm') return 'portability-replace-confirm'
   return 'unknown'
 }
@@ -406,6 +409,49 @@ const graphSelectTemplateHandler = (window: ManagedWindow) => {
 
 const graphSelectPortHandler = (window: ManagedWindow) => {
   return payloadFunction<(portId: string) => void>(window, 'onSelectPort')
+}
+
+const graphAddMatchedDevicesHandler = (window: ManagedWindow) => {
+  return payloadFunction<(deviceIds: number[]) => void>(window, 'onAddSelected')
+}
+
+const graphIntentPayload = (window: ManagedWindow): {
+  intent: ApiIntent
+  queryText: string
+  matches: ApiDeviceMatchItem[]
+  topCandidates: {
+    source_device_ids: number[]
+    destination_device_ids: number[]
+    processor_device_ids_by_tag: Record<string, number[]>
+  }
+} | null => {
+  const intent = window.payload.intent
+  if (!intent || typeof intent !== 'object') return null
+  const queryText = typeof window.payload.queryText === 'string' ? window.payload.queryText : ''
+  const matches = Array.isArray(window.payload.matches) ? window.payload.matches : []
+  const topCandidates = window.payload.topCandidates
+  if (!topCandidates || typeof topCandidates !== 'object') return null
+  return {
+    intent: intent as ApiIntent,
+    queryText,
+    matches: matches as ApiDeviceMatchItem[],
+    topCandidates: topCandidates as {
+      source_device_ids: number[]
+      destination_device_ids: number[]
+      processor_device_ids_by_tag: Record<string, number[]>
+    },
+  }
+}
+
+const graphIntentWindowIntent = (window: ManagedWindow): ApiIntent | null => graphIntentPayload(window)?.intent || null
+const graphIntentWindowQueryText = (window: ManagedWindow) => graphIntentPayload(window)?.queryText || ''
+const graphIntentWindowMatches = (window: ManagedWindow): ApiDeviceMatchItem[] => graphIntentPayload(window)?.matches || []
+const graphIntentWindowTopCandidates = (window: ManagedWindow) => {
+  const payload = graphIntentPayload(window)
+  if (!payload) {
+    return { source_device_ids: [], destination_device_ids: [], processor_device_ids_by_tag: {} }
+  }
+  return payload.topCandidates
 }
 
 const portabilityConfirmHandler = (window: ManagedWindow) => {
@@ -615,6 +661,15 @@ onBeforeUnmount(() => {
                   :node-title="String(window.payload.nodeTitle || '')"
                   :ports="graphConnectPorts(window)"
                   :on-select-port="graphSelectPortHandler(window)"
+                  @close="closeWindow(window)"
+                />
+                <GraphIntentMatchesWindow
+                  v-else-if="windowComponentKey(window) === 'graph-intent-matches' && graphIntentPayload(window)"
+                  :intent="graphIntentWindowIntent(window)"
+                  :query-text="graphIntentWindowQueryText(window)"
+                  :matches="graphIntentWindowMatches(window)"
+                  :top-candidates="graphIntentWindowTopCandidates(window)"
+                  :on-add-selected="graphAddMatchedDevicesHandler(window)"
                   @close="closeWindow(window)"
                 />
                 <PortabilityReplaceConfirmWindow

@@ -280,6 +280,33 @@ export interface ApiRecommendationRequest {
   max_hops?: number
 }
 
+export interface ApiIntent {
+  task: 'record' | 'reamp' | 'insert' | 'monitor'
+  source: {
+    kind: 'mic' | 'instrument' | 'line' | 'interface_out' | 'unknown'
+    device_hint?: string | null
+    count: number
+  }
+  destination: {
+    kind: 'interface_in' | 'amp_in' | 'monitors' | 'headphones' | 'unknown'
+    device_hint?: string | null
+    count: number
+  }
+  chain: Array<'preamp' | 'compressor' | 'eq'>
+  constraints: {
+    prefer_balanced: boolean
+    avoid_phantom_on_unknown: boolean
+    low_latency: boolean
+    allow_unsafe: boolean
+  }
+  notes?: string | null
+}
+
+export interface ApiIntentPrompt {
+  text: string
+  locale?: string
+}
+
 export interface ApiRecommendationConnection {
   a_type: 'device_port' | 'patchbay_point'
   a_id: string
@@ -320,6 +347,56 @@ export interface ApiRecommendationPlan {
 export interface ApiRecommendationResponse {
   intent: Record<string, unknown>
   plans: ApiRecommendationPlan[]
+}
+
+export interface ApiDeviceMatchRequest {
+  intent: ApiIntent
+  query_text?: string
+  limit?: number
+}
+
+export interface ApiDeviceMatchPortSummary {
+  port_id: string
+  label: string
+  type: string
+  direction: string
+  signal_type: string
+}
+
+export interface ApiDeviceMatchItem {
+  device_id: number
+  device_name: string
+  category: string
+  type: string
+  role_fit: 'source' | 'processor' | 'destination' | 'other'
+  score: number
+  score_breakdown: {
+    semantic_match: number
+    use_match: number
+    avoid_penalty: number
+    hint_match: number
+    category_match: number
+    port_direction_match: number
+    chain_tag_match: number
+  }
+  eligibility: {
+    is_source_candidate: boolean
+    is_destination_candidate: boolean
+    is_processor_candidate: boolean
+  }
+  reasons: string[]
+  ports: ApiDeviceMatchPortSummary[]
+}
+
+export interface ApiDeviceMatchResponse {
+  intent: ApiIntent
+  query_text: string
+  matches: ApiDeviceMatchItem[]
+  top_candidates: {
+    source_device_ids: number[]
+    destination_device_ids: number[]
+    processor_device_ids_by_tag: Record<string, number[]>
+  }
 }
 
 export interface ApiRecommendationPreviewResponse {
@@ -481,6 +558,20 @@ export const api = {
 
   async recommendConnectionsFromIntent(payload: ApiRecommendationRequest): Promise<ApiRecommendationResponse> {
     return requestJson<ApiRecommendationResponse>('/api/recommendations/from-intent', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async parseIntent(payload: ApiIntentPrompt): Promise<ApiIntent> {
+    return requestJson<ApiIntent>('/ai/intent', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async matchDevicesFromIntent(payload: ApiDeviceMatchRequest): Promise<ApiDeviceMatchResponse> {
+    return requestJson<ApiDeviceMatchResponse>('/api/recommendations/device-match', {
       method: 'POST',
       body: JSON.stringify(payload),
     })

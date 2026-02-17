@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useNodeCanvasPersistence } from '@/composables/useNodeCanvasPersistence'
-import { api, type NodeCanvasConnectionsLookupStatus } from '@/lib/api'
+import { api, type ApiDeviceMatchResponse, type ApiIntent, type NodeCanvasConnectionsLookupStatus } from '@/lib/api'
 import { windowManager } from '@/stores/windowManager'
 import {
   fromPersistedState,
@@ -52,6 +52,7 @@ interface NodeTemplate {
   kind: NodeKind;
   details: string[];
   ports: NodePort[];
+  deviceId?: number;
 }
 
 interface CableDraft {
@@ -109,6 +110,10 @@ const addSearchQuery = ref('')
 const showConnectModal = ref(false)
 const connectTargetNodeId = ref<string | null>(null)
 const connectConflictMessage = ref<string | null>(null)
+
+const intentPrompt = ref('')
+const intentMatchLoading = ref(false)
+const intentMatchError = ref<string | null>(null)
 
 const cableDraft = ref<CableDraft | null>(null)
 
@@ -392,6 +397,7 @@ const deviceCatalog = computed<NodeTemplate[]>(() => {
     subtitle: 'Device',
     kind: 'device',
     details: [`Type: ${device.type}`, `Ports: ${device.ports.length}`],
+    deviceId: device.id,
     ports: device.ports.length
       ? device.ports.map((port) => ({
           id: port.id,
@@ -425,6 +431,7 @@ const findDeviceTemplateByHandle = (handle: string): NodeTemplate | null => {
     subtitle: 'Device',
     kind: 'device',
     details: [`Type: ${device.type}`, `Ports: ${device.ports.length}`],
+    deviceId: device.id,
     ports: device.ports.length
       ? device.ports.map((port) => ({
           id: port.id,
@@ -1277,6 +1284,79 @@ const openAddModal = () => {
   connectedNoticeNodeId.value = null
 }
 
+const hasNodeForDeviceId = (deviceId: number) => {
+  const device = store.devices.find((row) => row.id === deviceId)
+  return nodes.value.some((node) => {
+    if (Number(node.deviceId) === deviceId) return true
+    if (!node.deviceId && node.kind === 'device' && device && node.title === device.name) return true
+    return false
+  })
+}
+
+const getDeviceTemplateById = (deviceId: number): NodeTemplate | null => {
+  return deviceCatalog.value.find((template) => template.deviceId === deviceId) ?? null
+}
+
+const addDeviceIdsToGraph = async (deviceIds: number[]) => {
+  const seen = new Set<number>()
+  for (const deviceId of deviceIds) {
+    if (!Number.isFinite(deviceId) || deviceId <= 0) continue
+    if (seen.has(deviceId)) continue
+    seen.add(deviceId)
+    if (hasNodeForDeviceId(deviceId)) continue
+    const template = getDeviceTemplateById(deviceId)
+    if (!template) continue
+    await addNodeFromTemplate(template, { closeModal: false })
+  }
+}
+
+const openIntentMatchesWindow = (intent: ApiIntent, matchResponse: ApiDeviceMatchResponse) => {
+  if (!props.floatingMode) return
+  windowManager.openChildWindow(
+    graphParentWindowId.value,
+    'graph-intent-matches',
+    'Intent Device Matches',
+    {
+      intent: matchResponse.intent,
+      queryText: matchResponse.query_text,
+      matches: matchResponse.matches,
+      topCandidates: matchResponse.top_candidates,
+      onAddSelected: (deviceIds: number[]) => {
+        void addDeviceIdsToGraph(deviceIds)
+      },
+    },
+    { id: `graph-intent-matches:${graphParentWindowId.value}` },
+  )
+  intentMatchError.value = null
+  intentPrompt.value = intent.notes || intentPrompt.value
+}
+
+const runIntentDeviceMatch = async () => {
+  const prompt = intentPrompt.value.trim()
+  if (!prompt || intentMatchLoading.value) return
+
+  intentMatchError.value = null
+  intentMatchLoading.value = true
+  try {
+    const parsedIntent = await api.parseIntent({ text: prompt })
+    const matchResponse = await api.matchDevicesFromIntent({
+      intent: parsedIntent,
+      query_text: prompt,
+      limit: 30,
+    })
+    if (props.floatingMode) {
+      openIntentMatchesWindow(parsedIntent, matchResponse)
+    } else {
+      await addDeviceIdsToGraph(matchResponse.matches.slice(0, 10).map((item) => item.device_id))
+    }
+  } catch (error: unknown) {
+    const candidate = error as { message?: unknown }
+    intentMatchError.value = typeof candidate?.message === 'string' ? candidate.message : 'Intent match failed'
+  } finally {
+    intentMatchLoading.value = false
+  }
+}
+
 const closeAddModal = () => {
   showAddModal.value = false
 }
@@ -1293,7 +1373,7 @@ const getViewportCenterWorld = () => {
   }
 }
 
-const addNodeFromTemplate = async (item: NodeTemplate) => {
+const addNodeFromTemplate = async (item: NodeTemplate, options?: { closeModal?: boolean }) => {
   const center = getViewportCenterWorld()
   const maxX = WORLD_WIDTH - NODE_WIDTH - BOARD_PADDING
   const maxY = WORLD_HEIGHT - NODE_HEIGHT - BOARD_PADDING
@@ -1303,6 +1383,7 @@ const addNodeFromTemplate = async (item: NodeTemplate) => {
   const id = `${item.kind}-${Date.now()}-${Math.floor(Math.random() * 1000)}`
   const createdNode: GraphNode = {
     id,
+    deviceId: item.deviceId ? String(item.deviceId) : null,
     title: item.title,
     subtitle: item.subtitle,
     kind: item.kind,
@@ -1315,7 +1396,7 @@ const addNodeFromTemplate = async (item: NodeTemplate) => {
   nodes.value.push(createdNode)
 
   selectSingleNode(id)
-  if (!props.floatingMode) {
+  if (!props.floatingMode && (options?.closeModal ?? true)) {
     closeAddModal()
   }
   scheduleStateSave()
@@ -1445,6 +1526,17 @@ onBeforeUnmount(() => {
         <button v-if="!persistence.readOnly.value" class="ghost-btn" @click="saveStateNow">Save now</button>
       </div>
       <div class="toolbar-actions">
+        <div class="intent-tools">
+          <input
+            v-model="intentPrompt"
+            class="intent-input"
+            placeholder="Describe your routing intent..."
+            @keydown.enter.prevent="void runIntentDeviceMatch()"
+          />
+          <button class="ghost-btn" :disabled="intentMatchLoading || !intentPrompt.trim()" @click="void runIntentDeviceMatch()">
+            {{ intentMatchLoading ? 'Matching...' : 'Match devices' }}
+          </button>
+        </div>
         <div class="zoom-controls">
           <button class="ghost-btn" @click="zoomOut">-</button>
           <span class="zoom-label">{{ zoomPercent }}</span>
@@ -1470,6 +1562,13 @@ onBeforeUnmount(() => {
       <span>{{ connectConflictMessage }}</span>
       <div class="chain-banner-actions">
         <button class="ghost-btn" @click="connectConflictMessage = null">Dismiss</button>
+      </div>
+    </div>
+
+    <div v-if="intentMatchError" class="chain-banner warning">
+      <span>{{ intentMatchError }}</span>
+      <div class="chain-banner-actions">
+        <button class="ghost-btn" @click="intentMatchError = null">Dismiss</button>
       </div>
     </div>
 
@@ -1738,6 +1837,22 @@ onBeforeUnmount(() => {
   gap: var(--space-2);
   flex-wrap: wrap;
   justify-content: flex-end;
+}
+
+.intent-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.intent-input {
+  min-width: 320px;
+  max-width: 420px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: rgba(31, 28, 24, 0.85);
+  color: var(--text-primary);
+  padding: 8px 10px;
 }
 
 .node-toolbar .ghost-btn {

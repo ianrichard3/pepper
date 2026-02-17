@@ -9,6 +9,7 @@ export type ChildWindowKind =
   | 'patchbay-overwrite-confirm'
   | 'graph-add-node'
   | 'graph-connect-node'
+  | 'graph-intent-matches'
   | 'portability-replace-confirm'
   | 'devices-delete-confirm'
 export type WindowKind = ToolWindowKind | ChildWindowKind
@@ -66,6 +67,7 @@ const NON_RESTORABLE_CHILD_KINDS = new Set<ChildWindowKind>([
   'patchbay-overwrite-confirm',
   'graph-add-node',
   'graph-connect-node',
+  'graph-intent-matches',
   'portability-replace-confirm',
 ])
 
