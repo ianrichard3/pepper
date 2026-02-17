@@ -223,6 +223,7 @@ npm run type-check    # Verificar tipos TypeScript
 - [CLERK_SETUP.md](./CLERK_SETUP.md) - Cómo configurar Clerk
 - [TESTING_GUIDE.md](./TESTING_GUIDE.md) - Cómo testear
 - [DEPLOYMENT.md](./DEPLOYMENT.md) - Cómo deployar
+- [INTENT_DEVICE_MATCH_WORKFLOW.md](./INTENT_DEVICE_MATCH_WORKFLOW.md) - Flujo de intent -> match -> node add en routing
 
 ### Documentación Técnica (Reference)
 - [ARCHITECTURE.md](./ARCHITECTURE.md) - Arquitectura y diseño
