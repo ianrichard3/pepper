@@ -17,6 +17,15 @@ export interface ApiPort {
   label: string
   type: 'Input' | 'Output' | 'Other'
   patchbay_id?: number | null
+  direction?: 'IN' | 'OUT' | 'BIDIR' | 'UNKNOWN'
+  signal_type?: 'MIC' | 'LINE' | 'INSTRUMENT' | 'DIGITAL' | 'MIDI' | 'USB' | 'HEADPHONE' | 'SPEAKER' | 'UNKNOWN'
+  connector?: 'XLR' | 'TRS' | 'TS' | 'RCA' | 'SPDIF' | 'ADAT' | 'MIDI_DIN' | 'USB' | 'ETHERNET' | 'OTHER' | 'UNKNOWN'
+  level?: 'MIC_LEVEL' | 'LINE_LEVEL' | 'INST_LEVEL' | 'DIGITAL' | 'UNKNOWN'
+  balanced?: 'TRUE' | 'FALSE' | 'UNKNOWN'
+  phantom_capable?: boolean
+  phantom_safe?: boolean | null
+  impedance_class?: 'HI_Z' | 'LO_Z' | 'UNKNOWN'
+  tags?: string[]
 }
 
 export interface ApiDevice {
@@ -152,6 +161,15 @@ export interface ApiDeviceCreate {
     label: string
     type: 'Input' | 'Output' | 'Other'
     patchbay_id: number | null
+    direction?: 'IN' | 'OUT' | 'BIDIR' | 'UNKNOWN'
+    signal_type?: 'MIC' | 'LINE' | 'INSTRUMENT' | 'DIGITAL' | 'MIDI' | 'USB' | 'HEADPHONE' | 'SPEAKER' | 'UNKNOWN'
+    connector?: 'XLR' | 'TRS' | 'TS' | 'RCA' | 'SPDIF' | 'ADAT' | 'MIDI_DIN' | 'USB' | 'ETHERNET' | 'OTHER' | 'UNKNOWN'
+    level?: 'MIC_LEVEL' | 'LINE_LEVEL' | 'INST_LEVEL' | 'DIGITAL' | 'UNKNOWN'
+    balanced?: 'TRUE' | 'FALSE' | 'UNKNOWN'
+    phantom_capable?: boolean
+    phantom_safe?: boolean | null
+    impedance_class?: 'HI_Z' | 'LO_Z' | 'UNKNOWN'
+    tags?: string[]
   }>
 }
 
@@ -167,6 +185,15 @@ export interface ApiDeviceUpdate {
     label: string
     type: 'Input' | 'Output' | 'Other'
     patchbay_id?: number | null
+    direction?: 'IN' | 'OUT' | 'BIDIR' | 'UNKNOWN'
+    signal_type?: 'MIC' | 'LINE' | 'INSTRUMENT' | 'DIGITAL' | 'MIDI' | 'USB' | 'HEADPHONE' | 'SPEAKER' | 'UNKNOWN'
+    connector?: 'XLR' | 'TRS' | 'TS' | 'RCA' | 'SPDIF' | 'ADAT' | 'MIDI_DIN' | 'USB' | 'ETHERNET' | 'OTHER' | 'UNKNOWN'
+    level?: 'MIC_LEVEL' | 'LINE_LEVEL' | 'INST_LEVEL' | 'DIGITAL' | 'UNKNOWN'
+    balanced?: 'TRUE' | 'FALSE' | 'UNKNOWN'
+    phantom_capable?: boolean
+    phantom_safe?: boolean | null
+    impedance_class?: 'HI_Z' | 'LO_Z' | 'UNKNOWN'
+    tags?: string[]
   }>
 }
 

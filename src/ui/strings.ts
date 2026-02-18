@@ -149,6 +149,7 @@ export const strings = {
       review: '3 Review',
     },
     catalogHelp: 'Search eBay catalog items and load data into the form.',
+    catalogNotIncluded: 'Catalog access is not included in your access.',
     catalogUnavailable: 'Catalog is currently unavailable.',
     catalogSearchPlaceholder: 'Search microphones, interfaces, mixers...',
     catalogSearchAction: 'Search',

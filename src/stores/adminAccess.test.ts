@@ -59,7 +59,7 @@ describe('adminAccessStore', () => {
     adminAccessStore.memberOverrides.user_1 = {
       enabled: true,
       plan: '',
-      features: { ai_detection: true, ai_intent: false, export: false },
+      features: { ai_detection: true, ai_intent: false, export: false, catalog: false },
       limits: {},
     }
 
@@ -76,7 +76,7 @@ describe('adminAccessStore', () => {
       allowlisted: false,
       enabled: true,
       plan: 'pro',
-      features: { ai_detection: true, ai_intent: true, export: true },
+      features: { ai_detection: true, ai_intent: true, export: true, catalog: true },
       limits: { ai_detection_per_month: 100, ai_intent_per_month: 50 },
     })
 
@@ -85,7 +85,7 @@ describe('adminAccessStore', () => {
       allowlisted: false,
       enabled: true,
       plan: 'pro',
-      features: { ai_detection: true, ai_intent: true, export: true },
+      features: { ai_detection: true, ai_intent: true, export: true, catalog: true },
       limits: { ai_detection_per_month: 100, ai_intent_per_month: 50 },
     })
 
@@ -103,7 +103,7 @@ describe('adminAccessStore', () => {
       allowlisted: false,
       enabled: true,
       plan: 'pro',
-      features: { ai_detection: true, ai_intent: false, export: true },
+      features: { ai_detection: true, ai_intent: false, export: true, catalog: false },
       limits: { ai_detection_per_month: 20, ai_intent_per_month: 10 },
     })
     api.updateWorkspaceEntitlementsAdmin.mockResolvedValue({
@@ -111,7 +111,7 @@ describe('adminAccessStore', () => {
       allowlisted: false,
       enabled: true,
       plan: 'pro',
-      features: { ai_detection: true, ai_intent: false, export: true },
+      features: { ai_detection: true, ai_intent: false, export: true, catalog: false },
       limits: { ai_detection_per_month: 20 },
     })
 

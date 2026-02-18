@@ -26,6 +26,12 @@ export function useEntitlements() {
     return hasFeature('export', false)
   })
 
+  const canUseCatalog = computed(() => {
+    if (!entitlementsSupported.value) return true
+    if (entitlementsDegraded.value) return false
+    return hasFeature('catalog', false)
+  })
+
   const aiMonthlyLimit = computed(() => {
     if (!entitlementsSupported.value || entitlementsDegraded.value) return null
     return getLimit('ai_detection_per_month')
@@ -37,6 +43,7 @@ export function useEntitlements() {
     hasAppAccess,
     canUseAiDetection,
     canExport,
+    canUseCatalog,
     aiMonthlyLimit,
   }
 }

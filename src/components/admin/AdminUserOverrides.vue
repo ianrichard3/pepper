@@ -16,6 +16,7 @@ const localOverride = reactive<EditableEntitlements>({
     ai_detection: false,
     ai_intent: false,
     export: false,
+    catalog: false,
   },
   limits: {},
 })

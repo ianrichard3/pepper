@@ -34,7 +34,7 @@ const deviceImages = useDeviceImages()
 const searchQuery = ref('')
 const isLoading = ref(false)
 const isDesktop = ref(window.innerWidth >= 1024)
-const { canUseAiDetection, aiMonthlyLimit } = useEntitlements()
+const { canUseAiDetection, aiMonthlyLimit, canUseCatalog: canUseCatalogEntitlement } = useEntitlements()
 
 const isAiQuotaExceeded = computed(() => {
   return quotaStore.aiDetectionRemaining !== null && quotaStore.aiDetectionRemaining <= 0
@@ -196,6 +196,22 @@ const parseTagsInput = (value: string): string[] => {
     })
 }
 
+type EditablePort = {
+  id?: string
+  label: string
+  type: 'Input' | 'Output' | 'Other'
+  patchbayId?: number | null
+  direction?: 'IN' | 'OUT' | 'BIDIR' | 'UNKNOWN'
+  signalType?: 'MIC' | 'LINE' | 'INSTRUMENT' | 'DIGITAL' | 'MIDI' | 'USB' | 'HEADPHONE' | 'SPEAKER' | 'UNKNOWN'
+  connector?: 'XLR' | 'TRS' | 'TS' | 'RCA' | 'SPDIF' | 'ADAT' | 'MIDI_DIN' | 'USB' | 'ETHERNET' | 'OTHER' | 'UNKNOWN'
+  level?: 'MIC_LEVEL' | 'LINE_LEVEL' | 'INST_LEVEL' | 'DIGITAL' | 'UNKNOWN'
+  balanced?: 'TRUE' | 'FALSE' | 'UNKNOWN'
+  phantomCapable?: boolean
+  phantomSafe?: boolean | null
+  impedanceClass?: 'HI_Z' | 'LO_Z' | 'UNKNOWN'
+  tags?: string[]
+}
+
 const newDevice = ref({
   name: '',
   category: fallbackDeviceCategory,
@@ -205,7 +221,7 @@ const newDevice = ref({
   avoidUses: '',
 })
 
-const newPorts = ref<Array<{ id?: string; label: string; type: 'Input' | 'Output' | 'Other'; patchbayId?: number | null }>>([])
+const newPorts = ref<EditablePort[]>([])
 
 const aiPreviewUrl = ref<string | null>(null)
 const aiLoading = ref(false)
@@ -369,6 +385,50 @@ const inferCatalogCategory = (item: ApiCatalogItemDetails) => {
   return 'OTHER'
 }
 
+const mapRawPortToEditable = (raw: Record<string, unknown>, index: number): EditablePort => {
+  const type = String(raw.type || 'Other')
+  const normalizedType: 'Input' | 'Output' | 'Other' =
+    type === 'Input' || type === 'Output' || type === 'Other' ? type : 'Other'
+
+  return {
+    label: String(raw.label || `Port ${index + 1}`),
+    type: normalizedType,
+    patchbayId: null,
+    direction: raw.direction as EditablePort['direction'],
+    signalType: raw.signal_type as EditablePort['signalType'],
+    connector: raw.connector as EditablePort['connector'],
+    level: raw.level as EditablePort['level'],
+    balanced: raw.balanced as EditablePort['balanced'],
+    phantomCapable: typeof raw.phantom_capable === 'boolean' ? raw.phantom_capable : undefined,
+    phantomSafe: typeof raw.phantom_safe === 'boolean' || raw.phantom_safe === null ? (raw.phantom_safe as boolean | null) : undefined,
+    impedanceClass: raw.impedance_class as EditablePort['impedanceClass'],
+    tags: Array.isArray(raw.tags) ? raw.tags.map((tag) => String(tag)) : [],
+  }
+}
+
+const readDeviceFromCatalogRawPayload = (item: ApiCatalogItemDetails): { device: typeof newDevice.value; ports: EditablePort[] } | null => {
+  const root = item.raw_payload
+  if (!root || typeof root !== 'object') return null
+  const raw = (root as Record<string, unknown>).device
+  if (!raw || typeof raw !== 'object') return null
+
+  const rawDevice = raw as Record<string, unknown>
+  const mapped = {
+    name: String(rawDevice.name || item.title || ''),
+    category: normalizeDeviceCategory(String(rawDevice.category || ''), String(rawDevice.type || '')),
+    type: normalizeDeviceType(String(rawDevice.type || fallbackDeviceType), String(rawDevice.category || fallbackDeviceCategory)),
+    tags: Array.isArray(rawDevice.tags) ? rawDevice.tags.map((tag) => String(tag)).filter(Boolean) : [],
+    recommendedUses: String(rawDevice.recommended_uses || ''),
+    avoidUses: String(rawDevice.avoid_uses || ''),
+  }
+  const ports = Array.isArray(rawDevice.ports)
+    ? rawDevice.ports
+        .filter((port) => port && typeof port === 'object')
+        .map((port, index) => mapRawPortToEditable(port as Record<string, unknown>, index))
+    : []
+  return { device: mapped, ports }
+}
+
 const clearCatalogSelection = () => {
   selectedCatalogExternalId.value = null
   selectedCatalogItem.value = null
@@ -379,6 +439,10 @@ const loadCatalogStatus = async () => {
   canUseCatalog.value = false
   activeCatalogProvider.value = null
   catalogStatusReason.value = null
+  if (!canUseCatalogEntitlement.value) {
+    catalogStatusReason.value = t.devices.catalogNotIncluded
+    return
+  }
   try {
     const status = await api.getCatalogStatus()
     const availableProviders = status.providers.filter((provider) => provider.available)
@@ -391,14 +455,21 @@ const loadCatalogStatus = async () => {
     catalogStatusReason.value = canUseCatalog.value
       ? null
       : (status.providers.find((provider) => provider.reason)?.reason || null)
-  } catch {
+  } catch (err: any) {
     canUseCatalog.value = false
     activeCatalogProvider.value = null
-    catalogStatusReason.value = t.devices.catalogUnavailable
+    catalogStatusReason.value = err?.message === 'ENTITLEMENT_REQUIRED'
+      ? t.devices.catalogNotIncluded
+      : (canUseCatalogEntitlement.value ? t.devices.catalogUnavailable : t.devices.catalogNotIncluded)
   }
 }
 
 const searchCatalog = async () => {
+  if (!canUseCatalog.value) {
+    catalogResults.value = []
+    catalogSearchError.value = catalogStatusReason.value || t.devices.catalogUnavailable
+    return
+  }
   const q = catalogQuery.value.trim()
   if (q.length < 2) {
     catalogResults.value = []
@@ -421,7 +492,9 @@ const searchCatalog = async () => {
       catalogSearchError.value = t.devices.catalogNoResults
     }
   } catch (err: any) {
-    if (err?.message === 'AUTH_SERVICE_UNAVAILABLE') {
+    if (err?.message === 'ENTITLEMENT_REQUIRED') {
+      catalogSearchError.value = t.devices.catalogNotIncluded
+    } else if (err?.message === 'AUTH_SERVICE_UNAVAILABLE') {
       catalogSearchError.value = t.devices.catalogUnavailable
     } else {
       catalogSearchError.value = err?.message || t.devices.catalogSearchFailed
@@ -432,6 +505,22 @@ const searchCatalog = async () => {
 }
 
 const applyCatalogItemToForm = (item: ApiCatalogItemDetails) => {
+  const fromRaw = readDeviceFromCatalogRawPayload(item)
+  if (fromRaw) {
+    newDevice.value = fromRaw.device
+    newPorts.value = fromRaw.ports
+    selectedCatalogSource.value = {
+      provider: item.provider,
+      externalId: item.external_id,
+      sourceUrl: item.source_url,
+      importedSnapshot: {
+        ...(item.raw_payload || {}),
+        auto_tags: fromRaw.device.tags,
+      },
+    }
+    return
+  }
+
   const category = inferCatalogCategory(item)
   const type = normalizeDeviceType(item.model || '', category)
   const preferredName = [item.brand, item.model].filter(Boolean).join(' ').trim() || item.title
@@ -464,6 +553,10 @@ const applyCatalogItemToForm = (item: ApiCatalogItemDetails) => {
 }
 
 const selectCatalogItem = async (item: ApiCatalogSearchItem) => {
+  if (!canUseCatalog.value) {
+    showError(catalogStatusReason.value || t.devices.catalogUnavailable)
+    return
+  }
   selectedCatalogExternalId.value = item.external_id
   catalogDetailsLoading.value = true
   try {
@@ -472,7 +565,9 @@ const selectCatalogItem = async (item: ApiCatalogSearchItem) => {
     applyCatalogItemToForm(details)
     addDeviceMode.value = 'manual'
   } catch (err: any) {
-    if (err?.message === 'AUTH_SERVICE_UNAVAILABLE') {
+    if (err?.message === 'ENTITLEMENT_REQUIRED') {
+      showError(t.devices.catalogNotIncluded)
+    } else if (err?.message === 'AUTH_SERVICE_UNAVAILABLE') {
       showError(t.devices.catalogUnavailable)
     } else {
       showError(err?.message || t.devices.catalogLoadFailed)
@@ -514,6 +609,15 @@ const loadDraft = () => {
           type: port.type as 'Input' | 'Output' | 'Other',
           patchbayId: port.patchbayId ?? null,
           id: port.id || undefined,
+          direction: port.direction || undefined,
+          signalType: port.signalType || undefined,
+          connector: port.connector || undefined,
+          level: port.level || undefined,
+          balanced: port.balanced || undefined,
+          phantomCapable: typeof port.phantomCapable === 'boolean' ? port.phantomCapable : undefined,
+          phantomSafe: typeof port.phantomSafe === 'boolean' || port.phantomSafe === null ? port.phantomSafe : undefined,
+          impedanceClass: port.impedanceClass || undefined,
+          tags: Array.isArray(port.tags) ? port.tags.map((tag: unknown) => String(tag).trim()).filter(Boolean) : [],
         }))
     }
   } catch (err) {
@@ -620,6 +724,15 @@ const openEditModal = (device: Device) => {
     label: port.label,
     type: port.type,
     patchbayId: port.patchbayId,
+    direction: port.direction,
+    signalType: port.signalType,
+    connector: port.connector,
+    level: port.level,
+    balanced: port.balanced,
+    phantomCapable: port.phantomCapable,
+    phantomSafe: port.phantomSafe,
+    impedanceClass: port.impedanceClass,
+    tags: [...(port.tags || [])],
   }))
   addDeviceMode.value = 'manual'
   aiStatusMessage.value = null
@@ -741,6 +854,15 @@ const handleResetForm = () => {
       label: port.label,
       type: port.type,
       patchbayId: port.patchbayId,
+      direction: port.direction,
+      signalType: port.signalType,
+      connector: port.connector,
+      level: port.level,
+      balanced: port.balanced,
+      phantomCapable: port.phantomCapable,
+      phantomSafe: port.phantomSafe,
+      impedanceClass: port.impedanceClass,
+      tags: [...(port.tags || [])],
     }))
     aiStatusMessage.value = null
     clearCatalogSelection()
@@ -788,6 +910,15 @@ const handleAiFileChange = async (event: Event) => {
       label: port.label,
       type: port.type,
       patchbayId: null,
+      direction: port.direction,
+      signalType: port.signalType,
+      connector: port.connector,
+      level: port.level,
+      balanced: port.balanced,
+      phantomCapable: port.phantomCapable,
+      phantomSafe: port.phantomSafe,
+      impedanceClass: port.impedanceClass,
+      tags: [...(port.tags || [])],
     }))
     aiStatusMessage.value = t.devices.aiDraftReady
   } catch (err: any) {
@@ -833,6 +964,15 @@ const handleAddDevice = async () => {
       label: p.label,
       type: p.type,
       patchbayId: p.patchbayId ?? null,
+      direction: p.direction,
+      signalType: p.signalType,
+      connector: p.connector,
+      level: p.level,
+      balanced: p.balanced,
+      phantomCapable: p.phantomCapable,
+      phantomSafe: p.phantomSafe,
+      impedanceClass: p.impedanceClass,
+      tags: [...(p.tags || [])],
     }))
 
     let deviceId: number

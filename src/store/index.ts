@@ -17,6 +17,15 @@ export interface DevicePort {
   label: string;
   type: 'Input' | 'Output' | 'Other';
   patchbayId: number | null;
+  direction?: 'IN' | 'OUT' | 'BIDIR' | 'UNKNOWN';
+  signalType?: 'MIC' | 'LINE' | 'INSTRUMENT' | 'DIGITAL' | 'MIDI' | 'USB' | 'HEADPHONE' | 'SPEAKER' | 'UNKNOWN';
+  connector?: 'XLR' | 'TRS' | 'TS' | 'RCA' | 'SPDIF' | 'ADAT' | 'MIDI_DIN' | 'USB' | 'ETHERNET' | 'OTHER' | 'UNKNOWN';
+  level?: 'MIC_LEVEL' | 'LINE_LEVEL' | 'INST_LEVEL' | 'DIGITAL' | 'UNKNOWN';
+  balanced?: 'TRUE' | 'FALSE' | 'UNKNOWN';
+  phantomCapable?: boolean;
+  phantomSafe?: boolean | null;
+  impedanceClass?: 'HI_Z' | 'LO_Z' | 'UNKNOWN';
+  tags?: string[];
 }
 
 export interface Device {
@@ -89,6 +98,15 @@ function apiPortToDevicePort(apiPort: ApiPort): DevicePort {
     label: apiPort.label,
     type: apiPort.type,
     patchbayId: apiPort.patchbay_id ?? null,
+    direction: apiPort.direction ?? undefined,
+    signalType: apiPort.signal_type ?? undefined,
+    connector: apiPort.connector ?? undefined,
+    level: apiPort.level ?? undefined,
+    balanced: apiPort.balanced ?? undefined,
+    phantomCapable: apiPort.phantom_capable ?? undefined,
+    phantomSafe: apiPort.phantom_safe ?? undefined,
+    impedanceClass: apiPort.impedance_class ?? undefined,
+    tags: Array.isArray(apiPort.tags) ? apiPort.tags : [],
   }
 }
 
@@ -593,6 +611,15 @@ export const store = reactive({
           label: p.label,
           type: p.type,
           patchbay_id: p.patchbayId,
+          direction: p.direction,
+          signal_type: p.signalType,
+          connector: p.connector,
+          level: p.level,
+          balanced: p.balanced,
+          phantom_capable: p.phantomCapable,
+          phantom_safe: p.phantomSafe,
+          impedance_class: p.impedanceClass,
+          tags: p.tags || [],
         })),
       }
       if (device.catalogSource) {
@@ -642,6 +669,15 @@ export const store = reactive({
           label: p.label,
           type: p.type,
           patchbay_id: p.patchbayId ?? null,
+          direction: p.direction,
+          signal_type: p.signalType,
+          connector: p.connector,
+          level: p.level,
+          balanced: p.balanced,
+          phantom_capable: p.phantomCapable,
+          phantom_safe: p.phantomSafe,
+          impedance_class: p.impedanceClass,
+          tags: p.tags || [],
         })),
       })
 
