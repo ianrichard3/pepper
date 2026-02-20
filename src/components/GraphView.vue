@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { GraphEdge, GraphNode } from '@/types/graph'
+import type { CanvasEdge, CanvasNode } from '@/types/graph'
 
 const props = defineProps<{
-  nodes: GraphNode[]
-  edges: GraphEdge[]
+  nodes: CanvasNode[]
+  edges: CanvasEdge[]
   selectedNodeId?: string | null
   selectedEdgeId?: string | null
   hoveredNodeId?: string | null
@@ -38,7 +38,7 @@ const visibleEdges = computed(() => {
   })
 })
 
-function findNodeByEndpoint(type: string, endpointId: string | number): GraphNode | undefined {
+function findNodeByEndpoint(type: string, endpointId: string | number): CanvasNode | undefined {
   return props.nodes.find((node) => node.endpoint?.type === type && String(node.endpoint.id) === String(endpointId))
 }
 
@@ -86,7 +86,7 @@ const renderedEdges = computed(() => {
     .filter((item): item is NonNullable<typeof item> => item !== null)
 })
 
-const isEdgeConnectedToHovered = (edge: GraphEdge) => {
+const isEdgeConnectedToHovered = (edge: CanvasEdge) => {
   if (!props.hoveredNodeId) return false
   const hovered = visibleNodes.value.find((node) => node.id === props.hoveredNodeId)
   if (!hovered?.endpoint) return false

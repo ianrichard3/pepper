@@ -2,26 +2,26 @@ import { reactive } from 'vue'
 import { api } from '@/lib/api'
 import { store } from '@/store'
 import type {
-  GraphEdge,
-  GraphEndpoint,
-  GraphPayload,
-  GraphScopeMode,
-  GraphSelectionState,
-  GraphNode,
+  CanvasEdge,
+  CanvasEndpoint,
+  CanvasPayload,
+  CanvasScopeMode,
+  CanvasSelectionState,
+  CanvasNode,
 } from '@/types/graph'
 
 interface GraphScope {
   type: 'workspace' | 'device' | 'patchbay'
   deviceId?: number
   patchbayId?: number
-  mode?: GraphScopeMode
+  mode?: CanvasScopeMode
 }
 
-function endpointKey(endpoint: GraphEndpoint): string {
+function endpointKey(endpoint: CanvasEndpoint): string {
   return `${endpoint.type}:${endpoint.id}`
 }
 
-function edgeIncludesEndpoint(edge: GraphEdge, endpoint: GraphEndpoint): boolean {
+function edgeIncludesEndpoint(edge: CanvasEdge, endpoint: CanvasEndpoint): boolean {
   const key = endpointKey(endpoint)
   return endpointKey(edge.a) === key || endpointKey(edge.b) === key
 }
@@ -40,9 +40,9 @@ function buildConflictMessage(err: any): string {
   return detail || 'Connection update failed.'
 }
 
-export const graphStore = reactive({
-  nodes: [] as GraphNode[],
-  edges: [] as GraphEdge[],
+export const canvasStore = reactive({
+  nodes: [] as CanvasNode[],
+  edges: [] as CanvasEdge[],
   loading: false,
   error: null as string | null,
   scope: { type: 'workspace' } as GraphScope,
@@ -50,16 +50,16 @@ export const graphStore = reactive({
     selectedNodeId: null,
     selectedEdgeId: null,
     pendingEndpoint: null,
-  } as GraphSelectionState,
+  } as CanvasSelectionState,
 
   get selectedNode() {
     if (!this.selection.selectedNodeId) return null
-    return this.nodes.find((node: GraphNode) => node.id === this.selection.selectedNodeId) ?? null
+    return this.nodes.find((node: CanvasNode) => node.id === this.selection.selectedNodeId) ?? null
   },
 
   get selectedEdge() {
     if (!this.selection.selectedEdgeId) return null
-    return this.edges.find((edge: GraphEdge) => edge.id === this.selection.selectedEdgeId) ?? null
+    return this.edges.find((edge: CanvasEdge) => edge.id === this.selection.selectedEdgeId) ?? null
   },
 
   get connectedEndpointKeys() {
@@ -71,7 +71,7 @@ export const graphStore = reactive({
     return keys
   },
 
-  endpointConnectionCount(endpoint: GraphEndpoint): number {
+  endpointConnectionCount(endpoint: CanvasEndpoint): number {
     let count = 0
     for (const edge of this.edges) {
       if (edgeIncludesEndpoint(edge, endpoint)) count += 1
@@ -79,7 +79,7 @@ export const graphStore = reactive({
     return count
   },
 
-  setGraph(payload: GraphPayload) {
+  setGraph(payload: CanvasPayload) {
     this.nodes = payload.nodes
     this.edges = payload.edges
   },
@@ -98,7 +98,7 @@ export const graphStore = reactive({
     }
   },
 
-  async loadDeviceGraph(deviceId: number, mode: GraphScopeMode = 'direct') {
+  async loadDeviceGraph(deviceId: number, mode: CanvasScopeMode = 'direct') {
     this.loading = true
     this.error = null
     this.scope = { type: 'device', deviceId, mode }
@@ -112,7 +112,7 @@ export const graphStore = reactive({
     }
   },
 
-  async loadPatchbayGraph(patchbayId: number, mode: GraphScopeMode = 'direct') {
+  async loadPatchbayGraph(patchbayId: number, mode: CanvasScopeMode = 'direct') {
     this.loading = true
     this.error = null
     this.scope = { type: 'patchbay', patchbayId, mode }
@@ -136,7 +136,7 @@ export const graphStore = reactive({
     this.selection.selectedNodeId = null
   },
 
-  setPendingEndpoint(endpoint: GraphEndpoint | null) {
+  setPendingEndpoint(endpoint: CanvasEndpoint | null) {
     this.selection.pendingEndpoint = endpoint
   },
 
@@ -146,7 +146,7 @@ export const graphStore = reactive({
     this.selection.pendingEndpoint = null
   },
 
-  canConnect(a: GraphEndpoint, b: GraphEndpoint) {
+  canConnect(a: CanvasEndpoint, b: CanvasEndpoint) {
     if (endpointKey(a) === endpointKey(b)) return false
     const pair = [a.type, b.type].sort().join(':')
     return pair === 'device_port:device_port' ||
@@ -154,7 +154,7 @@ export const graphStore = reactive({
       pair === 'patchbay_point:patchbay_point'
   },
 
-  async connectEndpoints(a: GraphEndpoint, b: GraphEndpoint): Promise<boolean> {
+  async connectEndpoints(a: CanvasEndpoint, b: CanvasEndpoint): Promise<boolean> {
     if (!this.canConnect(a, b)) {
       this.error = 'Invalid endpoint pair. Allowed: device-port/device-port, device-port/patchbay-point, patchbay-point/patchbay-point.'
       return false

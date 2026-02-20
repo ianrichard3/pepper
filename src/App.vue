@@ -9,7 +9,7 @@ import { quotaStore } from './stores/quota'
 import { windowManager, type ManagedWindow, type ToolWindowKind } from './stores/windowManager'
 import PatchBayGrid from './components/PatchBayGrid.vue'
 import DevicesManager from './components/DevicesManager.vue'
-import NodeGraphMock from './components/NodeGraphMock.vue'
+import RoutingCanvas from './components/RoutingCanvas.vue'
 import AuthScreen from './components/AuthScreen.vue'
 import AuthDiagnosticsPanel from './components/AuthDiagnosticsPanel.vue'
 import AccessDisabledScreen from './components/AccessDisabledScreen.vue'
@@ -352,9 +352,9 @@ const windowComponentKey = (window: ManagedWindow) => {
   if (window.kind === 'patchbay-overwrite-confirm') return 'patchbay-overwrite-confirm'
   if (window.kind === 'devices-add-edit') return 'devices-add-edit'
   if (window.kind === 'devices-delete-confirm') return 'devices-delete-confirm'
-  if (window.kind === 'graph-add-node') return 'graph-add-node'
-  if (window.kind === 'graph-connect-node') return 'graph-connect-node'
-  if (window.kind === 'graph-intent-matches') return 'graph-intent-matches'
+  if (window.kind === 'canvas-add-item') return 'canvas-add-item'
+  if (window.kind === 'canvas-select-port') return 'canvas-select-port'
+  if (window.kind === 'canvas-intent-matches') return 'canvas-intent-matches'
   if (window.kind === 'portability-replace-confirm') return 'portability-replace-confirm'
   return 'unknown'
 }
@@ -602,7 +602,7 @@ onBeforeUnmount(() => {
                   :modal-parent-window-id="window.id"
                   :on-open-detail-window="openDeviceDetailWindow"
                 />
-                <NodeGraphMock
+                <RoutingCanvas
                   v-else-if="windowComponentKey(window) === 'graph'"
                   floating-mode
                   :parent-window-id="window.id"
@@ -651,20 +651,20 @@ onBeforeUnmount(() => {
                   @close="closeWindow(window)"
                 />
                 <GraphAddNodeWindow
-                  v-else-if="windowComponentKey(window) === 'graph-add-node'"
+                  v-else-if="windowComponentKey(window) === 'canvas-add-item'"
                   :initial-tab="String(window.payload.initialTab || 'devices') === 'patchbay' ? 'patchbay' : 'devices'"
                   :on-select-template="graphSelectTemplateHandler(window)"
                   @close="closeWindow(window)"
                 />
                 <GraphConnectWindow
-                  v-else-if="windowComponentKey(window) === 'graph-connect-node'"
+                  v-else-if="windowComponentKey(window) === 'canvas-select-port'"
                   :node-title="String(window.payload.nodeTitle || '')"
                   :ports="graphConnectPorts(window)"
                   :on-select-port="graphSelectPortHandler(window)"
                   @close="closeWindow(window)"
                 />
                 <GraphIntentMatchesWindow
-                  v-else-if="windowComponentKey(window) === 'graph-intent-matches' && graphIntentPayload(window)"
+                  v-else-if="windowComponentKey(window) === 'canvas-intent-matches' && graphIntentPayload(window)"
                   :intent="graphIntentWindowIntent(window)"
                   :query-text="graphIntentWindowQueryText(window)"
                   :matches="graphIntentWindowMatches(window)"
@@ -732,7 +732,7 @@ onBeforeUnmount(() => {
             <template v-else>
               <PatchBayGrid v-if="store.activeTab === 'patchbay'" />
               <DevicesManager v-if="store.activeTab === 'devices'" />
-              <NodeGraphMock v-if="store.activeTab === 'nodeView'" />
+              <RoutingCanvas v-if="store.activeTab === 'nodeView'" />
             </template>
           </main>
         </div>

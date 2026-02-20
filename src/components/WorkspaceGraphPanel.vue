@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import GraphView from '@/components/GraphView.vue'
-import { graphStore } from '@/stores/graph'
+import { canvasStore } from '@/stores/graph'
 import { store } from '@/store'
-import type { GraphEndpoint } from '@/types/graph'
+import type { CanvasEndpoint } from '@/types/graph'
 import { api, type ApiRecommendationPlan } from '@/lib/api'
 
 const searchQuery = ref('')
@@ -11,23 +11,23 @@ const onlyConnected = ref(false)
 const hoveredNodeId = ref<string | null>(null)
 
 onMounted(() => {
-  void graphStore.loadWorkspaceGraph()
+  void canvasStore.loadWorkspaceGraph()
 })
 
 const filteredNodes = computed(() => {
   const query = searchQuery.value.trim().toLowerCase()
-  if (!query && !onlyConnected.value) return graphStore.nodes
+  if (!query && !onlyConnected.value) return canvasStore.nodes
 
-  return graphStore.nodes.filter((node) => {
-    const connected = !node.endpoint || graphStore.connectedEndpointKeys.has(`${node.endpoint.type}:${node.endpoint.id}`)
+  return canvasStore.nodes.filter((node) => {
+    const connected = !node.endpoint || canvasStore.connectedEndpointKeys.has(`${node.endpoint.type}:${node.endpoint.id}`)
     if (onlyConnected.value && !connected) return false
     if (!query) return true
     return `${node.label} ${node.kind}`.toLowerCase().includes(query)
   })
 })
 
-const selectedNode = computed(() => graphStore.selectedNode)
-const selectedEdge = computed(() => graphStore.selectedEdge)
+const selectedNode = computed(() => canvasStore.selectedNode)
+const selectedEdge = computed(() => canvasStore.selectedEdge)
 const recommendationPrompt = ref('')
 const recommendationLoading = ref(false)
 const recommendationError = ref('')
@@ -43,25 +43,25 @@ const connectCandidate = computed(() => {
 const canStartConnect = computed(() => !!connectCandidate.value)
 
 const createConnection = async () => {
-  if (!graphStore.selection.pendingEndpoint || !connectCandidate.value) return
-  await graphStore.connectEndpoints(graphStore.selection.pendingEndpoint, connectCandidate.value)
-  await graphStore.loadWorkspaceGraph()
+  if (!canvasStore.selection.pendingEndpoint || !connectCandidate.value) return
+  await canvasStore.connectEndpoints(canvasStore.selection.pendingEndpoint, connectCandidate.value)
+  await canvasStore.loadWorkspaceGraph()
 }
 
 const beginConnect = () => {
   if (!connectCandidate.value) return
-  graphStore.setPendingEndpoint(connectCandidate.value)
+  canvasStore.setPendingEndpoint(connectCandidate.value)
 }
 
 const clearConnect = () => {
-  graphStore.setPendingEndpoint(null)
+  canvasStore.setPendingEndpoint(null)
 }
 
 const removeSelectedEdge = async () => {
   if (!selectedEdge.value) return
-  const ok = await graphStore.disconnectEdge(selectedEdge.value.id)
+  const ok = await canvasStore.disconnectEdge(selectedEdge.value.id)
   if (ok) {
-    await graphStore.loadWorkspaceGraph()
+    await canvasStore.loadWorkspaceGraph()
   }
 }
 
@@ -71,7 +71,7 @@ const openDeviceDetail = () => {
   store.setTab('devices')
 }
 
-const endpointLabel = (endpoint: GraphEndpoint) => `${endpoint.type}:${endpoint.id}`
+const endpointLabel = (endpoint: CanvasEndpoint) => `${endpoint.type}:${endpoint.id}`
 
 const selectedPlan = computed(() => {
   return recommendationPlans.value.find((plan) => plan.id === selectedPlanId.value) || null
@@ -113,7 +113,7 @@ const applySelectedPlan = async () => {
   if (!selectedPlan.value) return
   try {
     await api.applyRecommendationPlan(selectedPlan.value)
-    await graphStore.loadWorkspaceGraph()
+    await canvasStore.loadWorkspaceGraph()
     await store.syncConnectionsProjectionSafe()
     previewByPlanId.value[selectedPlan.value.id] = 'Applied successfully.'
   } catch (err: any) {
@@ -129,29 +129,29 @@ const applySelectedPlan = async () => {
       <div class="graph-actions">
         <input v-model="searchQuery" class="graph-search" placeholder="Search devices, ports, or patchbay points" />
         <label class="connected-filter"><input v-model="onlyConnected" type="checkbox" /> Only connected</label>
-        <button class="ghost-btn" @click="graphStore.loadWorkspaceGraph">Refresh</button>
+        <button class="ghost-btn" @click="canvasStore.loadWorkspaceGraph">Refresh</button>
       </div>
     </header>
 
-    <div v-if="graphStore.loading" class="loading">Loading graph...</div>
-    <div v-else-if="graphStore.error" class="error">{{ graphStore.error }}</div>
+    <div v-if="canvasStore.loading" class="loading">Loading graph...</div>
+    <div v-else-if="canvasStore.error" class="error">{{ canvasStore.error }}</div>
 
     <div v-else class="graph-layout">
       <GraphView
         :nodes="filteredNodes"
-        :edges="graphStore.edges"
-        :selected-node-id="graphStore.selection.selectedNodeId"
-        :selected-edge-id="graphStore.selection.selectedEdgeId"
+        :edges="canvasStore.edges"
+        :selected-node-id="canvasStore.selection.selectedNodeId"
+        :selected-edge-id="canvasStore.selection.selectedEdgeId"
         :hovered-node-id="hoveredNodeId"
-        @select-node="(id) => { hoveredNodeId = id; graphStore.selectNode(id) }"
-        @select-edge="(id) => graphStore.selectEdge(id)"
+        @select-node="(id) => { hoveredNodeId = id; canvasStore.selectNode(id) }"
+        @select-edge="(id) => canvasStore.selectEdge(id)"
       />
 
       <aside class="details-panel">
         <h3>Details</h3>
 
-        <div v-if="graphStore.selection.pendingEndpoint" class="connect-banner">
-          Endpoint A: <strong>{{ endpointLabel(graphStore.selection.pendingEndpoint) }}</strong>
+        <div v-if="canvasStore.selection.pendingEndpoint" class="connect-banner">
+          Endpoint A: <strong>{{ endpointLabel(canvasStore.selection.pendingEndpoint) }}</strong>
           <button class="ghost-btn" @click="clearConnect">Cancel</button>
         </div>
 
@@ -162,7 +162,7 @@ const applySelectedPlan = async () => {
           <div class="detail-actions">
             <button v-if="canStartConnect" class="ghost-btn" @click="beginConnect">Set as endpoint A</button>
             <button
-              v-if="graphStore.selection.pendingEndpoint && connectCandidate"
+              v-if="canvasStore.selection.pendingEndpoint && connectCandidate"
               class="primary-btn"
               @click="createConnection"
             >

@@ -64,4 +64,21 @@ describe('windowManager bounds', () => {
     expect(resized?.rect.x).toBe(872)
     expect(resized?.rect.y).toBe(750)
   })
+
+  it('keeps newly opened child window on top after same-tick parent focus', async () => {
+    const parent = windowManager.openTool('graph', 'Routing Canvas')
+    const child = windowManager.openChildWindow(
+      parent.id,
+      'canvas-select-port',
+      'Select Port',
+      {},
+      { id: 'canvas-select-port:test-parent' },
+    )
+
+    windowManager.focusWindow(parent.id)
+    await Promise.resolve()
+
+    const latest = [...windowManager.windows].sort((a, b) => b.zIndex - a.zIndex)[0]
+    expect(latest?.id).toBe(child.id)
+  })
 })

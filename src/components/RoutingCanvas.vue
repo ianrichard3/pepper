@@ -8,7 +8,7 @@ import {
   toPersistedState,
   type NodeKind,
   type NodeGraphCable as CableConnection,
-  type NodeGraphNode as GraphNode,
+  type NodeCanvasNode as CanvasNode,
   type NodeGraphPort as NodePort,
 } from '@/features/nodeCanvas/model'
 import { store } from '@/store'
@@ -80,14 +80,14 @@ const HOVER_TOOLTIP_DELAY_MS = 280
 const DEFAULT_PAN = { x: 40, y: 40 }
 const DEFAULT_SCALE = 1
 
-const INITIAL_NODES: GraphNode[] = []
+const INITIAL_NODES: CanvasNode[] = []
 const INITIAL_CABLES: CableConnection[] = []
 
 const boardRef = ref<HTMLElement | null>(null)
 const persistence = useNodeCanvasPersistence({ debounceMs: 600 })
 const hasMovedNodeDuringDrag = ref(false)
 const hasPannedDuringGesture = ref(false)
-const nodes = ref<GraphNode[]>(
+const nodes = ref<CanvasNode[]>(
   INITIAL_NODES.map((node) => ({
     ...node,
     details: [...node.details],
@@ -130,6 +130,7 @@ const hoveredCableId = ref<string | null>(null)
 const isHoveringCableTooltip = ref(false)
 const cableHideTimer = ref<ReturnType<typeof setTimeout> | null>(null)
 const isApplyingConnections = ref(false)
+const isRefreshingConnections = ref(false)
 const applyStatusMessage = ref<string | null>(null)
 const applyErrorMessage = ref<string | null>(null)
 const applyUndoPayload = ref<{ created_connection_ids: number[]; deleted_connection_ids: number[] } | null>(null)
@@ -144,7 +145,7 @@ const graphParentWindowId = computed(() => {
 
 const closeFloatingConnectWindows = () => {
   for (const item of [...windowManager.windows]) {
-    if (item.kind === 'graph-connect-node' && item.parentId === graphParentWindowId.value) {
+    if (item.kind === 'canvas-select-port' && item.parentId === graphParentWindowId.value) {
       windowManager.closeWindow(item.id)
     }
   }
@@ -545,6 +546,36 @@ const handleFromEndpoint = (endpointType: 'device_port' | 'patchbay_point', endp
   return `pb-${endpointId}`
 }
 
+const parseHandleEndpointType = (handle: string): 'device_port' | 'patchbay_point' | null => {
+  if (handle.startsWith('dev-')) return 'device_port'
+  if (/^pb-\d+$/.test(handle)) return 'patchbay_point'
+  return null
+}
+
+const slotForPeerType = (peerType: 'device_port' | 'patchbay_point'): 'device' | 'patchbay' => {
+  return peerType === 'device_port' ? 'device' : 'patchbay'
+}
+
+const slotForPeerHandle = (peerHandle: string): 'device' | 'patchbay' | null => {
+  const peerType = parseHandleEndpointType(peerHandle)
+  if (!peerType) return null
+  return slotForPeerType(peerType)
+}
+
+const cableUsesEndpointSlot = (
+  cable: CableConnection,
+  endpointHandle: string,
+  peerSlot: 'device' | 'patchbay',
+) => {
+  if (cable.fromPortId === endpointHandle) {
+    return slotForPeerHandle(cable.toPortId) === peerSlot
+  }
+  if (cable.toPortId === endpointHandle) {
+    return slotForPeerHandle(cable.fromPortId) === peerSlot
+  }
+  return false
+}
+
 const mergeConnectedStatuses = (statuses: NodeCanvasConnectionsLookupStatus[]) => {
   const connected = statuses.filter((item) => item.already_connected)
   if (connected.length === 0) return null
@@ -589,7 +620,7 @@ const mergeConnectedStatuses = (statuses: NodeCanvasConnectionsLookupStatus[]) =
   }
 }
 
-const isNodeInRevealedChain = (node: GraphNode) => {
+const isNodeInRevealedChain = (node: CanvasNode) => {
   return node.ports.some((port) => revealedChainHandleSet.value.has(port.id))
 }
 
@@ -606,7 +637,7 @@ const clearRevealedChain = () => {
   revealedChainEdgeIds.value = []
 }
 
-const buildDefaultNodesFromDevices = (): GraphNode[] => {
+const buildDefaultNodesFromDevices = (): CanvasNode[] => {
   if (store.devices.length === 0) {
     return INITIAL_NODES.map((node) => ({
       ...node,
@@ -665,7 +696,7 @@ const saveStateNow = async () => {
   await persistence.saveNow(buildSnapshotState())
 }
 
-const lookupExistingComponentForNode = async (node: GraphNode) => {
+const lookupExistingComponentForNode = async (node: CanvasNode) => {
   const handles = node.ports.map((port) => port.id).filter(isLookupHandle)
   if (handles.length === 0) return
 
@@ -776,15 +807,22 @@ const applyCanvasToWiring = async () => {
   applyErrorMessage.value = null
   applyStatusMessage.value = null
   applyUndoPayload.value = null
+  let saveWarning: string | null = null
   try {
-    await saveStateNow()
-    const result = await api.applyNodeCanvasConnections({ use_saved_state: true })
+    const snapshot = buildSnapshotState()
+    await persistence.saveNow(snapshot)
+    if (persistence.error.value) {
+      saveWarning = `Canvas save warning: ${persistence.error.value}.`
+    }
+
+    const result = await api.applyNodeCanvasConnections({ state: snapshot })
     await store.syncConnectionsProjectionSafe()
     const created = result.report.created_connection_ids.length
     const deleted = result.report.deleted_connection_ids.length
     const skipped = result.report.skipped_edges.length
     const conflicts = result.report.conflicts.length
-    applyStatusMessage.value = `Applied: ${created} created, ${deleted} deleted, ${skipped} skipped, ${conflicts} conflicts`
+    const applySummary = `Applied: ${created} created, ${deleted} deleted, ${skipped} skipped, ${conflicts} conflicts`
+    applyStatusMessage.value = saveWarning ? `${applySummary} ${saveWarning}` : applySummary
     if (result.undo && (result.undo.created_connection_ids.length > 0 || result.undo.deleted_connection_ids.length > 0)) {
       applyUndoPayload.value = {
         created_connection_ids: [...result.undo.created_connection_ids],
@@ -815,6 +853,77 @@ const undoLastApply = async () => {
     applyErrorMessage.value = typeof candidate?.message === 'string' ? candidate.message : 'Undo failed'
   } finally {
     isApplyingConnections.value = false
+  }
+}
+
+const refreshCanvasConnections = async () => {
+  if (isRefreshingConnections.value) return
+  isRefreshingConnections.value = true
+  applyErrorMessage.value = null
+  applyStatusMessage.value = null
+
+  try {
+    const portOwnerByHandle = new Map<string, string>()
+    const representedHandles = new Set<string>()
+    for (const node of nodes.value) {
+      for (const port of node.ports) {
+        if (!isLookupHandle(port.id)) continue
+        representedHandles.add(port.id)
+        if (!portOwnerByHandle.has(port.id)) {
+          portOwnerByHandle.set(port.id, node.id)
+        }
+      }
+    }
+
+    if (representedHandles.size === 0) {
+      applyStatusMessage.value = 'Live refresh skipped: no mapped canvas handles available.'
+      return
+    }
+
+    const liveConnections = await api.listConnections()
+    const syncedCables: CableConnection[] = []
+    const pairKeys = new Set<string>()
+    let skippedOutOfCanvas = 0
+
+    for (const edge of liveConnections) {
+      const aHandle = handleFromEndpoint(edge.a.type, String(edge.a.id))
+      const bHandle = handleFromEndpoint(edge.b.type, String(edge.b.id))
+      const fromNodeId = portOwnerByHandle.get(aHandle)
+      const toNodeId = portOwnerByHandle.get(bHandle)
+      if (!fromNodeId || !toNodeId) {
+        skippedOutOfCanvas += 1
+        continue
+      }
+
+      const pairKey = [aHandle, bHandle].sort().join('::')
+      if (pairKeys.has(pairKey)) continue
+      pairKeys.add(pairKey)
+
+      syncedCables.push({
+        id: `live-edge-${edge.id}`,
+        fromNodeId,
+        fromPortId: aHandle,
+        toNodeId,
+        toPortId: bHandle,
+      })
+    }
+
+    const preservedLocalCables = cables.value.filter((cable) => {
+      const fromRepresented = representedHandles.has(cable.fromPortId)
+      const toRepresented = representedHandles.has(cable.toPortId)
+      return !(fromRepresented && toRepresented)
+    })
+
+    cables.value = [...preservedLocalCables, ...syncedCables]
+    connectConflictMessage.value = null
+    scheduleStateSave()
+
+    applyStatusMessage.value = `Live refresh: ${syncedCables.length} synced, ${preservedLocalCables.length} local preserved, ${skippedOutOfCanvas} out-of-canvas skipped.`
+  } catch (error: unknown) {
+    const candidate = error as { message?: unknown }
+    applyErrorMessage.value = typeof candidate?.message === 'string' ? candidate.message : 'Live refresh failed'
+  } finally {
+    isRefreshingConnections.value = false
   }
 }
 
@@ -914,7 +1023,7 @@ const onTooltipPointerLeave = () => {
   closePinnedTooltip()
 }
 
-const onNodePointerDown = (event: PointerEvent, node: GraphNode) => {
+const onNodePointerDown = (event: PointerEvent, node: CanvasNode) => {
   if (event.button === 1) {
     event.preventDefault()
     startPanGesture(event)
@@ -927,9 +1036,10 @@ const onNodePointerDown = (event: PointerEvent, node: GraphNode) => {
     selectSingleNode(node.id)
     if (cableDraft.value.fromNodeId === node.id) return
     if (props.floatingMode) {
+      event.stopPropagation()
       windowManager.openChildWindow(
         graphParentWindowId.value,
-        'graph-connect-node',
+        'canvas-select-port',
         `Connect to ${node.title}`,
         {
           nodeId: node.id,
@@ -940,9 +1050,9 @@ const onNodePointerDown = (event: PointerEvent, node: GraphNode) => {
             statusLabel: getPortConnectionLabel(node.id, port.id),
             occupied: isTargetPortOccupied(node.id, port.id),
           })),
-          onSelectPort: (portId: string) => connectDraftToTargetPort(portId),
+          onSelectPort: (portId: string) => connectDraftToTargetPort(node.id, portId),
         },
-        { id: `graph-connect-node:${graphParentWindowId.value}:${node.id}` },
+        { id: `canvas-select-port:${graphParentWindowId.value}:${node.id}` },
       )
     } else {
       connectTargetNodeId.value = node.id
@@ -1178,28 +1288,48 @@ const isTargetPortOccupied = (nodeId: string, portId: string) => {
   return getPortConnections(nodeId, portId).length > 0 || hasKnownExternalConnectionForPort(nodeId, portId)
 }
 
-const connectDraftToTargetPort = (targetPortId: string) => {
-  if (!cableDraft.value || !activeConnectTargetNode.value) return
+const connectDraftToTargetPort = (targetNodeId: string, targetPortId: string) => {
+  if (!cableDraft.value) return
 
   const sourceNodeId = cableDraft.value.fromNodeId
   const sourcePortId = cableDraft.value.fromPortId
-  const targetNodeId = activeConnectTargetNode.value.id
 
   if (sourceNodeId === targetNodeId && sourcePortId === targetPortId) return
 
-  const alreadyExists = cables.value.some(
-    (cable) =>
+  const alreadyExists = cables.value.some((cable) => {
+    const sameDirection =
       cable.fromNodeId === sourceNodeId &&
       cable.fromPortId === sourcePortId &&
       cable.toNodeId === targetNodeId &&
-      cable.toPortId === targetPortId,
-  )
+      cable.toPortId === targetPortId
+    const reverseDirection =
+      cable.fromNodeId === targetNodeId &&
+      cable.fromPortId === targetPortId &&
+      cable.toNodeId === sourceNodeId &&
+      cable.toPortId === sourcePortId
+    return sameDirection || reverseDirection
+  })
   if (alreadyExists) {
     cancelCableDraft()
     return
   }
 
-  if (isTargetPortOccupied(targetNodeId, targetPortId)) {
+  const sourcePeerSlot = slotForPeerHandle(targetPortId)
+  const targetPeerSlot = slotForPeerHandle(sourcePortId)
+  const nextCables = cables.value.filter((cable) => {
+    const sourceConflict = sourcePeerSlot
+      ? cableUsesEndpointSlot(cable, sourcePortId, sourcePeerSlot)
+      : false
+    const targetConflict = targetPeerSlot
+      ? cableUsesEndpointSlot(cable, targetPortId, targetPeerSlot)
+      : false
+    return !sourceConflict && !targetConflict
+  })
+  const replacedCount = cables.value.length - nextCables.length
+  if (replacedCount > 0) {
+    cables.value = nextCables
+    connectConflictMessage.value = `Replaced ${replacedCount} conflicting route${replacedCount === 1 ? '' : 's'} for this slot.`
+  } else if (isTargetPortOccupied(targetNodeId, targetPortId)) {
     connectConflictMessage.value = 'Connection conflict detected: this destination port is already in use. Saving will overwrite the existing route for that slot.'
   }
 
@@ -1266,7 +1396,7 @@ const openAddModal = () => {
   if (props.floatingMode) {
     windowManager.openChildWindow(
       graphParentWindowId.value,
-      'graph-add-node',
+      'canvas-add-item',
       'Add Node',
       {
         initialTab: 'devices',
@@ -1274,7 +1404,7 @@ const openAddModal = () => {
           void addNodeFromTemplate(item)
         },
       },
-      { id: `graph-add-node:${graphParentWindowId.value}` },
+      { id: `canvas-add-item:${graphParentWindowId.value}` },
     )
     return
   }
@@ -1314,7 +1444,7 @@ const openIntentMatchesWindow = (intent: ApiIntent, matchResponse: ApiDeviceMatc
   if (!props.floatingMode) return
   windowManager.openChildWindow(
     graphParentWindowId.value,
-    'graph-intent-matches',
+    'canvas-intent-matches',
     'Intent Device Matches',
     {
       intent: matchResponse.intent,
@@ -1325,7 +1455,7 @@ const openIntentMatchesWindow = (intent: ApiIntent, matchResponse: ApiDeviceMatc
         void addDeviceIdsToGraph(deviceIds)
       },
     },
-    { id: `graph-intent-matches:${graphParentWindowId.value}` },
+    { id: `canvas-intent-matches:${graphParentWindowId.value}` },
   )
   intentMatchError.value = null
   intentPrompt.value = intent.notes || intentPrompt.value
@@ -1381,7 +1511,7 @@ const addNodeFromTemplate = async (item: NodeTemplate, options?: { closeModal?: 
   const x = snapToGrid(clamp(center.x - NODE_WIDTH * 0.5, BOARD_PADDING, maxX))
   const y = snapToGrid(clamp(center.y - NODE_HEIGHT * 0.5, BOARD_PADDING, maxY))
   const id = `${item.kind}-${Date.now()}-${Math.floor(Math.random() * 1000)}`
-  const createdNode: GraphNode = {
+  const createdNode: CanvasNode = {
     id,
     deviceId: item.deviceId ? String(item.deviceId) : null,
     title: item.title,
@@ -1545,6 +1675,9 @@ onBeforeUnmount(() => {
         </div>
         <button class="ghost-btn apply-btn" :disabled="persistence.readOnly.value || isApplyingConnections" @click="applyCanvasToWiring">
           {{ isApplyingConnections ? 'Applying...' : 'Apply to wiring' }}
+        </button>
+        <button class="ghost-btn" :disabled="isRefreshingConnections" @click="void refreshCanvasConnections()">
+          {{ isRefreshingConnections ? 'Refreshing...' : 'Refresh live wiring' }}
         </button>
         <button class="ghost-btn add-btn" @click="openAddModal">+ Add node</button>
         <button class="ghost-btn danger-btn" :disabled="!hasSelectedNodes" @click="deleteSelectedNodes">
@@ -1754,7 +1887,7 @@ onBeforeUnmount(() => {
             :key="port.id"
             class="catalog-item"
             :class="{ occupied: isTargetPortOccupied(activeConnectTargetNode.id, port.id) }"
-            @click="connectDraftToTargetPort(port.id)"
+            @click="connectDraftToTargetPort(activeConnectTargetNode.id, port.id)"
           >
             <span class="catalog-item-title">{{ port.name }}</span>
             <span class="catalog-item-subtitle">{{ getPortConnectionLabel(activeConnectTargetNode.id, port.id) }}</span>

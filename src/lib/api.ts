@@ -1,7 +1,7 @@
 // API client for patchbay backend
 import { apiBaseUrl } from './authConfig'
 import { fetchWithAuth, requestJson, requestJsonWithMeta } from './apiClient'
-import type { GraphEndpoint, GraphPayload, GraphEdge, GraphNode } from '@/types/graph'
+import type { CanvasEndpoint, CanvasPayload, CanvasEdge, CanvasNode } from '@/types/graph'
 import type { FeatureKey, LimitKey } from './entitlementKeys'
 
 // API Types (snake_case from backend)
@@ -46,8 +46,8 @@ export interface ApiState {
   devices: ApiDevice[]
 }
 
-type GraphNodeWire = Record<string, unknown>
-type GraphEdgeWire = Record<string, unknown>
+type CanvasNodeWire = Record<string, unknown>
+type CanvasEdgeWire = Record<string, unknown>
 
 export interface NodeCanvasViewport {
   x: number
@@ -456,31 +456,31 @@ export const api = {
     return requestJson<ApiState>('/state')
   },
 
-  async getGraph(): Promise<GraphPayload> {
-    const payload = await requestJson<{ nodes?: GraphNodeWire[]; edges?: GraphEdgeWire[] }>('/api/graph')
-    return normalizeGraphPayload(payload)
+  async getGraph(): Promise<CanvasPayload> {
+    const payload = await requestJson<{ nodes?: CanvasNodeWire[]; edges?: CanvasEdgeWire[] }>('/api/graph')
+    return normalizeCanvasPayload(payload)
   },
 
-  async getDeviceGraph(deviceId: number, options?: { mode?: 'direct' | 'reachable' }): Promise<GraphPayload> {
+  async getDeviceGraph(deviceId: number, options?: { mode?: 'direct' | 'reachable' }): Promise<CanvasPayload> {
     const params = new URLSearchParams({ device_id: String(deviceId) })
     if (options?.mode) params.set('mode', options.mode)
-    const payload = await requestJson<{ nodes?: GraphNodeWire[]; edges?: GraphEdgeWire[] }>(`/api/graph?${params.toString()}`)
-    return normalizeGraphPayload(payload)
+    const payload = await requestJson<{ nodes?: CanvasNodeWire[]; edges?: CanvasEdgeWire[] }>(`/api/graph?${params.toString()}`)
+    return normalizeCanvasPayload(payload)
   },
 
-  async getPatchbayGraph(patchbayId: number, options?: { mode?: 'direct' | 'reachable' }): Promise<GraphPayload> {
+  async getPatchbayGraph(patchbayId: number, options?: { mode?: 'direct' | 'reachable' }): Promise<CanvasPayload> {
     const params = new URLSearchParams({ patchbay_id: String(patchbayId) })
     if (options?.mode) params.set('mode', options.mode)
-    const payload = await requestJson<{ nodes?: GraphNodeWire[]; edges?: GraphEdgeWire[] }>(`/api/graph?${params.toString()}`)
-    return normalizeGraphPayload(payload)
+    const payload = await requestJson<{ nodes?: CanvasNodeWire[]; edges?: CanvasEdgeWire[] }>(`/api/graph?${params.toString()}`)
+    return normalizeCanvasPayload(payload)
   },
 
-  async listConnections(): Promise<GraphEdge[]> {
-    const payload = await requestJson<GraphEdgeWire[]>('/api/connections')
-    return payload.map((item) => normalizeGraphEdge(item))
+  async listConnections(): Promise<CanvasEdge[]> {
+    const payload = await requestJson<CanvasEdgeWire[]>('/api/connections')
+    return payload.map((item) => normalizeCanvasEdge(item))
   },
 
-  async createConnection(payload: { a: GraphEndpoint; b: GraphEndpoint } | ApiConnectionCreate): Promise<GraphEdge> {
+  async createConnection(payload: { a: CanvasEndpoint; b: CanvasEndpoint } | ApiConnectionCreate): Promise<CanvasEdge> {
     const body = 'a' in payload
       ? {
           a_type: payload.a.type,
@@ -489,11 +489,11 @@ export const api = {
           b_id: String(payload.b.id),
         }
       : payload
-    const result = await requestJson<GraphEdgeWire>('/api/connections', {
+    const result = await requestJson<CanvasEdgeWire>('/api/connections', {
       method: 'POST',
       body: JSON.stringify(body),
     })
-    return normalizeGraphEdge(result)
+    return normalizeCanvasEdge(result)
   },
 
   async deleteConnection(connectionId: string): Promise<void> {
@@ -798,20 +798,20 @@ interface AIDeviceExtraction {
   }>
 }
 
-function normalizeGraphPayload(payload: { nodes?: GraphNodeWire[]; edges?: GraphEdgeWire[] }): GraphPayload {
+function normalizeCanvasPayload(payload: { nodes?: CanvasNodeWire[]; edges?: CanvasEdgeWire[] }): CanvasPayload {
   return {
-    nodes: (payload.nodes || []).map((node) => normalizeGraphNode(node)),
-    edges: (payload.edges || []).map((edge) => normalizeGraphEdge(edge)),
+    nodes: (payload.nodes || []).map((node) => normalizeCanvasNode(node)),
+    edges: (payload.edges || []).map((edge) => normalizeCanvasEdge(edge)),
   }
 }
 
-function normalizeGraphNode(raw: GraphNodeWire): GraphNode {
+function normalizeCanvasNode(raw: CanvasNodeWire): CanvasNode {
   const kind = String(raw.node_type || raw.kind || raw.type || 'port') as 'device' | 'port' | 'patchbay_point'
   const data = (raw.data && typeof raw.data === 'object') ? (raw.data as Record<string, unknown>) : null
   const endpointObj = (raw.endpoint && typeof raw.endpoint === 'object') ? (raw.endpoint as Record<string, unknown>) : null
   const endpointTypeRaw = raw.endpoint_type || raw.endpointType || raw.type
     || endpointObj?.type
-  let endpointType: GraphEndpoint['type'] | undefined
+  let endpointType: CanvasEndpoint['type'] | undefined
   if (endpointTypeRaw === 'device_port' || endpointTypeRaw === 'patchbay_point') {
     endpointType = endpointTypeRaw
   } else if (kind === 'port') {
@@ -841,11 +841,11 @@ function normalizeGraphNode(raw: GraphNodeWire): GraphNode {
   }
 }
 
-function normalizeGraphEdge(raw: GraphEdgeWire): GraphEdge {
+function normalizeCanvasEdge(raw: CanvasEdgeWire): CanvasEdge {
   const sourceObj = (raw.source && typeof raw.source === 'object') ? (raw.source as Record<string, unknown>) : null
   const targetObj = (raw.target && typeof raw.target === 'object') ? (raw.target as Record<string, unknown>) : null
-  const aType = (raw.a_type || raw.from_type || raw.endpoint_a_type || raw.source_type || sourceObj?.type || 'device_port') as GraphEndpoint['type']
-  const bType = (raw.b_type || raw.to_type || raw.endpoint_b_type || raw.target_type || targetObj?.type || 'device_port') as GraphEndpoint['type']
+  const aType = (raw.a_type || raw.from_type || raw.endpoint_a_type || raw.source_type || sourceObj?.type || 'device_port') as CanvasEndpoint['type']
+  const bType = (raw.b_type || raw.to_type || raw.endpoint_b_type || raw.target_type || targetObj?.type || 'device_port') as CanvasEndpoint['type']
   const aId = raw.a_id || raw.from_id || raw.endpoint_a_id || raw.source_id || sourceObj?.id
   const bId = raw.b_id || raw.to_id || raw.endpoint_b_id || raw.target_id || targetObj?.id
 

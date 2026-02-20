@@ -20,18 +20,18 @@ vi.mock('@/store', () => ({
   },
 }))
 
-const { graphStore } = await import('@/stores/graph')
+const { canvasStore } = await import('@/stores/graph')
 
-describe('graphStore sync', () => {
+describe('canvasStore sync', () => {
   beforeEach(() => {
     createConnection.mockReset()
     deleteConnection.mockReset()
     syncConnectionsProjectionSafe.mockReset()
     pushToast.mockReset()
 
-    graphStore.edges = []
-    graphStore.error = null
-    graphStore.resetSelection()
+    canvasStore.edges = []
+    canvasStore.error = null
+    canvasStore.resetSelection()
   })
 
   it('syncs global connections projection after creating a connection', async () => {
@@ -42,18 +42,18 @@ describe('graphStore sync', () => {
       b: { type: 'patchbay_point', id: '1' },
     })
 
-    const ok = await graphStore.connectEndpoints(
+    const ok = await canvasStore.connectEndpoints(
       { type: 'device_port', id: 'p1' },
       { type: 'patchbay_point', id: '1' },
     )
 
     expect(ok).toBe(true)
     expect(syncConnectionsProjectionSafe).toHaveBeenCalledTimes(1)
-    expect(graphStore.edges).toHaveLength(1)
+    expect(canvasStore.edges).toHaveLength(1)
   })
 
   it('syncs global connections projection after deleting a connection', async () => {
-    graphStore.edges = [
+    canvasStore.edges = [
       {
         id: 'edge-1',
         kind: 'connection',
@@ -63,11 +63,11 @@ describe('graphStore sync', () => {
     ]
     deleteConnection.mockResolvedValue(undefined)
 
-    const ok = await graphStore.disconnectEdge('edge-1')
+    const ok = await canvasStore.disconnectEdge('edge-1')
 
     expect(ok).toBe(true)
     expect(deleteConnection).toHaveBeenCalledWith('edge-1')
     expect(syncConnectionsProjectionSafe).toHaveBeenCalledTimes(1)
-    expect(graphStore.edges).toHaveLength(0)
+    expect(canvasStore.edges).toHaveLength(0)
   })
 })

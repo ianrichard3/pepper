@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import GraphView from '@/components/GraphView.vue'
-import { graphStore } from '@/stores/graph'
-import type { GraphScopeMode } from '@/types/graph'
+import { canvasStore } from '@/stores/graph'
+import type { CanvasScopeMode } from '@/types/graph'
 
 const props = defineProps<{ deviceId: number }>()
 
-const mode = ref<GraphScopeMode>('direct')
+const mode = ref<CanvasScopeMode>('direct')
 
 const load = async () => {
-  await graphStore.loadDeviceGraph(props.deviceId, mode.value)
+  await canvasStore.loadDeviceGraph(props.deviceId, mode.value)
 }
 
 onMounted(() => {
@@ -24,19 +24,19 @@ watch(mode, () => {
   void load()
 })
 
-const selectedNode = computed(() => graphStore.selectedNode)
-const selectedEdge = computed(() => graphStore.selectedEdge)
+const selectedNode = computed(() => canvasStore.selectedNode)
+const selectedEdge = computed(() => canvasStore.selectedEdge)
 
 const createFromSelection = async () => {
-  if (!graphStore.selection.pendingEndpoint) return
+  if (!canvasStore.selection.pendingEndpoint) return
   if (!selectedNode.value?.endpoint) return
-  const ok = await graphStore.connectEndpoints(graphStore.selection.pendingEndpoint, selectedNode.value.endpoint)
+  const ok = await canvasStore.connectEndpoints(canvasStore.selection.pendingEndpoint, selectedNode.value.endpoint)
   if (ok) await load()
 }
 
 const disconnectSelection = async () => {
   if (!selectedEdge.value) return
-  const ok = await graphStore.disconnectEdge(selectedEdge.value.id)
+  const ok = await canvasStore.disconnectEdge(selectedEdge.value.id)
   if (ok) await load()
 }
 </script>
@@ -52,17 +52,17 @@ const disconnectSelection = async () => {
       </div>
     </header>
 
-    <div v-if="graphStore.loading" class="hint">Loading graph...</div>
-    <div v-else-if="graphStore.error" class="hint error">{{ graphStore.error }}</div>
+    <div v-if="canvasStore.loading" class="hint">Loading graph...</div>
+    <div v-else-if="canvasStore.error" class="hint error">{{ canvasStore.error }}</div>
 
     <div v-else class="section-layout">
       <GraphView
-        :nodes="graphStore.nodes"
-        :edges="graphStore.edges"
-        :selected-node-id="graphStore.selection.selectedNodeId"
-        :selected-edge-id="graphStore.selection.selectedEdgeId"
-        @select-node="graphStore.selectNode"
-        @select-edge="graphStore.selectEdge"
+        :nodes="canvasStore.nodes"
+        :edges="canvasStore.edges"
+        :selected-node-id="canvasStore.selection.selectedNodeId"
+        :selected-edge-id="canvasStore.selection.selectedEdgeId"
+        @select-node="canvasStore.selectNode"
+        @select-edge="canvasStore.selectEdge"
       />
 
       <div class="section-detail">
@@ -70,8 +70,8 @@ const disconnectSelection = async () => {
         <p v-if="selectedEdge"><strong>Edge:</strong> {{ selectedEdge.id }}</p>
 
         <div class="actions" v-if="selectedNode?.endpoint">
-          <button class="ghost-btn" @click="graphStore.setPendingEndpoint(selectedNode.endpoint)">Set as endpoint A</button>
-          <button v-if="graphStore.selection.pendingEndpoint" class="primary-btn" @click="createFromSelection">Create connection</button>
+          <button class="ghost-btn" @click="canvasStore.setPendingEndpoint(selectedNode.endpoint)">Set as endpoint A</button>
+          <button v-if="canvasStore.selection.pendingEndpoint" class="primary-btn" @click="createFromSelection">Create connection</button>
         </div>
 
         <button v-if="selectedEdge" class="danger-btn" @click="disconnectSelection">Disconnect</button>

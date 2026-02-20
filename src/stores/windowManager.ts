@@ -7,9 +7,9 @@ export type ChildWindowKind =
   | 'patchbay-point-detail'
   | 'patchbay-link-search'
   | 'patchbay-overwrite-confirm'
-  | 'graph-add-node'
-  | 'graph-connect-node'
-  | 'graph-intent-matches'
+  | 'canvas-add-item'
+  | 'canvas-select-port'
+  | 'canvas-intent-matches'
   | 'portability-replace-confirm'
   | 'devices-delete-confirm'
 export type WindowKind = ToolWindowKind | ChildWindowKind
@@ -65,9 +65,9 @@ const NON_RESTORABLE_CHILD_KINDS = new Set<ChildWindowKind>([
   'devices-delete-confirm',
   'patchbay-link-search',
   'patchbay-overwrite-confirm',
-  'graph-add-node',
-  'graph-connect-node',
-  'graph-intent-matches',
+  'canvas-add-item',
+  'canvas-select-port',
+  'canvas-intent-matches',
   'portability-replace-confirm',
 ])
 
@@ -162,11 +162,20 @@ export const windowManager = reactive({
     return this.windows.find((window) => window.kind === kind) || null
   },
 
+  focusWindowDeferred(windowId: string) {
+    queueMicrotask(() => {
+      const window = this.getWindow(windowId)
+      if (!window) return
+      this.focusWindow(windowId)
+    })
+  },
+
   openTool(kind: ToolWindowKind, title: string) {
     const existing = this.getToolWindow(kind)
     if (existing) {
       this.restoreWindow(existing.id)
       this.focusWindow(existing.id)
+      this.focusWindowDeferred(existing.id)
       return existing
     }
 
@@ -186,6 +195,7 @@ export const windowManager = reactive({
     }
     this.windows.push(window)
     this.persist()
+    this.focusWindowDeferred(window.id)
     return window
   },
 
@@ -197,6 +207,7 @@ export const windowManager = reactive({
       this.restoreWindow(existing.id)
       this.focusWindow(existing.id)
       this.persist()
+      this.focusWindowDeferred(existing.id)
       return existing
     }
 
@@ -229,6 +240,7 @@ export const windowManager = reactive({
     }
     this.windows.push(window)
     this.persist()
+    this.focusWindowDeferred(window.id)
     return window
   },
 
@@ -251,6 +263,7 @@ export const windowManager = reactive({
         this.restoreWindow(existing.id)
         this.focusWindow(existing.id)
         this.persist()
+        this.focusWindowDeferred(existing.id)
         return existing
       }
     }
@@ -285,6 +298,7 @@ export const windowManager = reactive({
     }
     this.windows.push(window)
     this.persist()
+    this.focusWindowDeferred(window.id)
     return window
   },
 

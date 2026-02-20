@@ -30,6 +30,35 @@ describe('api node canvas connections', () => {
     })
   })
 
+  it('applies explicit in-memory node canvas state', async () => {
+    requestJson.mockResolvedValue({
+      result: 'success',
+      report: { created_connection_ids: [], deleted_connection_ids: [], skipped_edges: [], conflicts: [] },
+      undo: { created_connection_ids: [], deleted_connection_ids: [] },
+    })
+
+    await api.applyNodeCanvasConnections({
+      state: {
+        schemaVersion: '1',
+        nodes: [],
+        edges: [],
+        viewport: { x: 40, y: 40, zoom: 1 },
+      },
+    })
+
+    expect(requestJson).toHaveBeenCalledWith('/api/node-canvas/connections/apply', {
+      method: 'POST',
+      body: JSON.stringify({
+        state: {
+          schemaVersion: '1',
+          nodes: [],
+          edges: [],
+          viewport: { x: 40, y: 40, zoom: 1 },
+        },
+      }),
+    })
+  })
+
   it('looks up existing node canvas connection chains', async () => {
     requestJson.mockResolvedValue({ statuses: [] })
 

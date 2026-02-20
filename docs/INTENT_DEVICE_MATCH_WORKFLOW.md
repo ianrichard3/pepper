@@ -13,13 +13,13 @@ This document explains the new routing-assist workflow:
 
 ### 1) Intent input in routing screen
 
-In Node View (`NodeGraphMock`), the toolbar includes:
+In Routing Canvas (`RoutingCanvas`), the toolbar includes:
 
 - free text input (`intentPrompt`)
 - `Match devices` action
 
 Code reference:
-- `src/components/NodeGraphMock.vue`
+- `src/components/RoutingCanvas.vue`
 
 ### 2) Parse free text to intent JSON
 
@@ -58,7 +58,7 @@ Response includes:
 
 ### 4) Floating window for match selection
 
-A dedicated child window (`graph-intent-matches`) displays:
+A dedicated child window (`canvas-intent-matches`) displays:
 
 - ranked list
 - highlighted top candidates
@@ -86,7 +86,7 @@ Why this matters:
 - existing-chain lookup still runs
 
 Implementation references:
-- `src/components/NodeGraphMock.vue`
+- `src/components/RoutingCanvas.vue`
 
 ## Matching Criteria (Backend Scoring)
 

@@ -9,7 +9,7 @@ export interface NodeGraphPort {
   direction: PortDirection
 }
 
-export interface NodeGraphNode {
+export interface NodeCanvasNode {
   id: string
   title: string
   subtitle: string
@@ -30,7 +30,7 @@ export interface NodeGraphCable {
 }
 
 export interface NodeGraphSnapshot {
-  nodes: NodeGraphNode[]
+  nodes: NodeCanvasNode[]
   cables: NodeGraphCable[]
   pan: { x: number; y: number }
   scale: number
@@ -74,7 +74,7 @@ export function fromPersistedState(state: NodeCanvasState): NodeGraphSnapshot {
   const rawNodes = Array.isArray(state.nodes) ? state.nodes : []
   const rawEdges = Array.isArray(state.edges) ? state.edges : []
 
-  const nodes: NodeGraphNode[] = rawNodes.map((node) => {
+  const nodes: NodeCanvasNode[] = rawNodes.map((node) => {
     const ui = node.ui ?? {}
     const rawPorts = Array.isArray(ui.ports) ? ui.ports : []
 

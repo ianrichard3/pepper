@@ -2,7 +2,7 @@ import { reactive } from 'vue'
 import { api, type ApiPort, type ApiDevice, type ApiPatchbayPoint } from '@/lib/api'
 import { deviceImageCache } from '@/lib/deviceImageCache'
 import { strings } from '@/ui/strings'
-import type { GraphEdge } from '@/types/graph'
+import type { CanvasEdge } from '@/types/graph'
 
 // Types
 export interface PatchBayNode {
@@ -74,7 +74,7 @@ interface DevicePatchbayLink {
 
 type FloatingWindowKey = 'devices' | `device:${number}`
 
-function toDevicePatchbayLink(edge: GraphEdge): DevicePatchbayLink | null {
+function toDevicePatchbayLink(edge: CanvasEdge): DevicePatchbayLink | null {
   const a = edge.a
   const b = edge.b
 
@@ -177,7 +177,7 @@ export const store = reactive({
   pendingLink: null as PendingLink | null, // The port waiting to be linked (from Device -> Patchbay flow)
   linkFlow: null as LinkFlow | null,
   lastLinkReturnPayload: null as LinkFlow['returnPayload'] | null,
-  connections: [] as GraphEdge[],
+  connections: [] as CanvasEdge[],
   highlightedPatchIds: [] as number[], // For connection finder highlighting
   patchbayFocusId: null as number | null,
   connectionFinderState: {
