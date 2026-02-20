@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import { store } from '@/store'
 import { strings } from '@/ui/strings'
 import { windowManager } from '@/stores/windowManager'
@@ -16,8 +16,13 @@ const emit = defineEmits<{
 
 const t = strings
 const loading = ref(false)
+const confirmInput = ref('')
+const canConfirmDelete = computed(() => {
+  return !loading.value && confirmInput.value.trim() === t.confirm.deleteKeyword
+})
 
 const confirmDelete = async () => {
+  if (!canConfirmDelete.value) return
   loading.value = true
   try {
     await store.deleteDevice(props.deviceId)
@@ -38,10 +43,17 @@ const confirmDelete = async () => {
   <section class="delete-confirm">
     <h3 class="selectable-detail-text">{{ t.confirm.deleteDeviceTitle }}</h3>
     <p class="selectable-detail-text">{{ t.confirm.deleteDeviceMessage(deviceName) }}</p>
+    <p class="help selectable-detail-text">{{ t.confirm.deleteTypeToConfirm }}</p>
+    <input
+      v-model="confirmInput"
+      class="confirm-input"
+      :placeholder="t.confirm.deleteInputPlaceholder"
+      :disabled="loading"
+    />
     <div class="actions">
       <button class="btn ghost" :disabled="loading" @click="emit('close')">{{ t.confirm.cancel }}</button>
-      <button class="btn solid" :disabled="loading" @click="confirmDelete">
-        {{ loading ? 'Deleting...' : t.confirm.confirm }}
+      <button class="btn solid" :disabled="!canConfirmDelete" @click="confirmDelete">
+        {{ loading ? t.confirm.deleting : t.confirm.confirm }}
       </button>
     </div>
   </section>
@@ -52,6 +64,20 @@ const confirmDelete = async () => {
   display: grid;
   gap: var(--space-3);
   padding: var(--space-2);
+}
+
+.help {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.confirm-input {
+  width: 100%;
+  background: var(--surface-1);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  border-radius: var(--radius-2);
+  padding: 8px 10px;
 }
 
 .actions {
@@ -77,5 +103,10 @@ const confirmDelete = async () => {
 .btn.solid {
   background: var(--danger);
   color: #fff;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 </style>

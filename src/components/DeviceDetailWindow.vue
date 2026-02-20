@@ -1,8 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 import { store, type DevicePort } from '@/store'
 import { strings } from '@/ui/strings'
-import ConfirmDialog from '@/ui/ConfirmDialog.vue'
 
 const props = defineProps<{
   deviceId: number
@@ -13,8 +12,6 @@ const emit = defineEmits<{
 }>()
 
 const t = strings
-const deleteTarget = ref<{ id: number; name: string } | null>(null)
-const isLoading = ref(false)
 
 const device = computed(() => store.devices.find((item) => item.id === props.deviceId) || null)
 
@@ -57,30 +54,6 @@ const goToPatchPoint = (port: DevicePort) => {
 const patchTargetLabel = (port: DevicePort) => {
   if (port.patchbayId === null) return ''
   return t.devices.goToPatch(port.patchbayId)
-}
-
-const requestDeleteDevice = () => {
-  if (!device.value) return
-  deleteTarget.value = { id: device.value.id, name: device.value.name }
-}
-
-const confirmDeleteDevice = async () => {
-  if (!deleteTarget.value) return
-  isLoading.value = true
-  try {
-    await store.deleteDevice(deleteTarget.value.id)
-    store.pushToast({ type: 'success', message: strings.toast.deviceDeleted })
-    emit('close')
-  } catch (err: any) {
-    store.pushToast({ type: 'error', message: err?.message || strings.toast.deviceDeleteFailed })
-  } finally {
-    isLoading.value = false
-    deleteTarget.value = null
-  }
-}
-
-const cancelDeleteDevice = () => {
-  deleteTarget.value = null
 }
 </script>
 
@@ -132,11 +105,6 @@ const cancelDeleteDevice = () => {
         </div>
       </div>
 
-      <div class="panel-footer">
-        <button class="delete-btn" :disabled="isLoading" @click="requestDeleteDevice">
-          {{ t.devices.deleteDevice }}
-        </button>
-      </div>
     </template>
 
     <template v-else>
@@ -146,13 +114,6 @@ const cancelDeleteDevice = () => {
       </div>
     </template>
 
-    <ConfirmDialog
-      v-if="deleteTarget"
-      :title="t.confirm.deleteDeviceTitle"
-      :message="t.confirm.deleteDeviceMessage(deleteTarget.name)"
-      @confirm="confirmDeleteDevice"
-      @cancel="cancelDeleteDevice"
-    />
   </section>
 </template>
 
@@ -244,21 +205,6 @@ const cancelDeleteDevice = () => {
   background: transparent;
   border: 1px solid var(--border-default);
   color: var(--text-secondary);
-}
-
-.panel-footer {
-  display: flex;
-  justify-content: flex-end;
-}
-
-.delete-btn {
-  background-color: var(--danger);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-2);
-  padding: 8px 12px;
-  font-weight: 600;
-  cursor: pointer;
 }
 
 .missing-device {

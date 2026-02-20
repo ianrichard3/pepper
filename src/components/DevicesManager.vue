@@ -8,7 +8,6 @@ import { buildPortsFromCatalog, extractCatalogTags } from '@/lib/catalogAutofill
 import { quotaStore } from '@/stores/quota'
 import { store, type Device, type DevicePort } from '../store'
 import { strings } from '../ui/strings'
-import ConfirmDialog from '../ui/ConfirmDialog.vue'
 import { useDeviceImages } from '@/composables/useDeviceImages'
 import { windowManager } from '@/stores/windowManager'
 
@@ -33,7 +32,6 @@ const deviceImages = useDeviceImages()
 
 const searchQuery = ref('')
 const isLoading = ref(false)
-const isDesktop = ref(window.innerWidth >= 1024)
 const { canUseAiDetection, aiMonthlyLimit, canUseCatalog: canUseCatalogEntitlement } = useEntitlements()
 
 const isAiQuotaExceeded = computed(() => {
@@ -61,10 +59,6 @@ const aiUploadDisabledReason = computed(() => {
   if (isAiQuotaExceeded.value) return strings.toast.quotaExceeded
   return ''
 })
-
-const updateViewport = () => {
-  isDesktop.value = window.innerWidth >= 1024
-}
 
 const PREFETCH_COUNT = 12
 const PREFETCH_IDLE_TIMEOUT = 2000
@@ -114,7 +108,6 @@ const schedulePrefetch = (devices: Device[]) => {
 }
 
 onMounted(() => {
-  window.addEventListener('resize', updateViewport)
   observer.value = new IntersectionObserver((entries) => {
     for (const entry of entries) {
       const deviceId = elementToDeviceId.get(entry.target)
@@ -142,7 +135,14 @@ const filteredDevices = computed(() => {
   )
 })
 
-const selectedDevice = ref<Device | null>(null)
+const sortedFilteredDevices = computed(() => {
+  return [...filteredDevices.value].sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
+  )
+})
+
+const selectedDeviceIds = ref<Set<number>>(new Set())
+const activeRowId = ref<number | null>(null)
 const showAddModal = ref(false)
 const addDeviceMode = ref<'manual' | 'ai' | 'catalog'>('manual')
 const editingDeviceId = ref<number | null>(null)
@@ -157,7 +157,6 @@ const editSnapshot = ref<{
   }
   ports: DevicePort[]
 } | null>(null)
-const deleteTarget = ref<Device | null>(null)
 const DRAFT_STORAGE_KEY = 'el-riche.addDeviceDraft'
 const LEGACY_DRAFT_STORAGE_KEY = 'pepper.addDeviceDraft'
 
@@ -293,16 +292,269 @@ const removePort = (index: number) => {
   newPorts.value.splice(index, 1)
 }
 
-const selectDevice = (device: Device) => {
+const selectedRowsCount = computed(() => selectedDeviceIds.value.size)
+
+const selectedRowsLabel = computed(() => {
+  const count = selectedRowsCount.value
+  if (count === 1) return '1 selected'
+  return `${count} selected`
+})
+
+const editableSelectedDevice = computed(() => {
+  if (selectedDeviceIds.value.size !== 1) return null
+  const [selectedId] = selectedDeviceIds.value
+  return store.devices.find((item) => item.id === selectedId) || null
+})
+
+const canEditSelection = computed(() => editableSelectedDevice.value !== null)
+const canOpenPortsSelection = computed(() => editableSelectedDevice.value !== null)
+const canDeleteSelection = computed(() => editableSelectedDevice.value !== null)
+const portsModalDeviceId = ref<number | null>(null)
+const portsModalDevice = computed(() => {
+  if (portsModalDeviceId.value === null) return null
+  return store.devices.find((item) => item.id === portsModalDeviceId.value) || null
+})
+const inlineDeleteTarget = ref<Device | null>(null)
+const inlineDeleteConfirmInput = ref('')
+const inlineCanConfirmDelete = computed(() => {
+  return inlineDeleteTarget.value !== null && inlineDeleteConfirmInput.value.trim() === t.confirm.deleteKeyword && !isLoading.value
+})
+
+const isRowSelected = (deviceId: number) => selectedDeviceIds.value.has(deviceId)
+
+const setOnlySelectedRow = (deviceId: number) => {
+  selectedDeviceIds.value = new Set([deviceId])
+  activeRowId.value = deviceId
+}
+
+const toggleRowSelection = (deviceId: number) => {
+  const next = new Set(selectedDeviceIds.value)
+  if (next.has(deviceId)) {
+    next.delete(deviceId)
+  } else {
+    next.add(deviceId)
+  }
+  selectedDeviceIds.value = next
+  if (activeRowId.value === null || activeRowId.value === deviceId) {
+    activeRowId.value = next.size === 0 ? null : deviceId
+  }
+}
+
+const visibleDeviceIds = computed(() => new Set(sortedFilteredDevices.value.map((device) => device.id)))
+
+const selectedVisibleCount = computed(() => {
+  let count = 0
+  for (const id of selectedDeviceIds.value) {
+    if (visibleDeviceIds.value.has(id)) count += 1
+  }
+  return count
+})
+
+const areAllVisibleSelected = computed(() => {
+  const visibleCount = sortedFilteredDevices.value.length
+  return visibleCount > 0 && selectedVisibleCount.value === visibleCount
+})
+
+const areSomeVisibleSelected = computed(() => {
+  return selectedVisibleCount.value > 0 && !areAllVisibleSelected.value
+})
+
+const toggleSelectAllVisible = () => {
+  if (areAllVisibleSelected.value) {
+    selectedDeviceIds.value = new Set()
+    activeRowId.value = null
+    return
+  }
+  const next = new Set<number>()
+  for (const device of sortedFilteredDevices.value) {
+    next.add(device.id)
+  }
+  selectedDeviceIds.value = next
+  activeRowId.value = sortedFilteredDevices.value[0]?.id ?? null
+}
+
+const applySelectionToVisible = () => {
+  const visibleIds = visibleDeviceIds.value
+  const next = new Set<number>()
+  for (const id of selectedDeviceIds.value) {
+    if (visibleIds.has(id)) next.add(id)
+  }
+  selectedDeviceIds.value = next
+  if (activeRowId.value !== null && !visibleIds.has(activeRowId.value)) {
+    activeRowId.value = sortedFilteredDevices.value[0]?.id ?? null
+  }
+}
+
+const imageStatusBadge = (device: Device) => {
+  if (!device.imageUrl) return 'No image'
+  const status = getDeviceImageState(device).status
+  if (status === 'loaded') return 'Loaded'
+  if (status === 'loading' || status === 'idle') return 'Loading'
+  if (status === 'not_found') return 'Missing'
+  return 'Error'
+}
+
+const linkedPortsCount = (device: Device) => {
+  return device.ports.filter((port) => port.patchbayId !== null).length
+}
+
+const formatUpdatedAt = (device: Device) => {
+  if (!device.imageUpdatedAt) return '-'
+  const dt = new Date(device.imageUpdatedAt)
+  if (Number.isNaN(dt.getTime())) return '-'
+  return dt.toLocaleDateString()
+}
+
+const visibleTags = (device: Device) => (device.tags || []).slice(0, 2)
+
+const hiddenTagsCount = (device: Device) => Math.max((device.tags || []).length - 2, 0)
+
+const handleEditSelected = () => {
+  if (!editableSelectedDevice.value) return
+  openEditModal(editableSelectedDevice.value)
+}
+
+const openPortsForDevice = (device: Device) => {
   if (props.floatingMode) {
     props.onOpenDetailWindow?.(device.id)
     return
   }
-  selectedDevice.value = device
+  portsModalDeviceId.value = device.id
 }
 
-const closeDetail = () => {
-  selectedDevice.value = null
+const handleOpenPortsSelected = () => {
+  if (!editableSelectedDevice.value) return
+  openPortsForDevice(editableSelectedDevice.value)
+}
+
+const closePortsModal = () => {
+  portsModalDeviceId.value = null
+}
+
+const isPortConnected = (port: DevicePort) => port.patchbayId !== null
+
+const linkPortToPatchbay = (port: DevicePort) => {
+  if (!portsModalDevice.value) return
+  store.startLinkingPort(
+    {
+      portId: port.id,
+      deviceId: portsModalDevice.value.id,
+      deviceName: portsModalDevice.value.name,
+      portLabel: port.label,
+    },
+    {
+      returnTab: 'devices',
+      returnPayload: { deviceId: portsModalDevice.value.id },
+    },
+  )
+  closePortsModal()
+}
+
+const unlinkPortFromDevice = async (port: DevicePort) => {
+  if (!portsModalDevice.value) return
+  await store.unlinkPort(portsModalDevice.value.id, port.id)
+}
+
+const goToPatchPoint = (port: DevicePort) => {
+  if (port.patchbayId === null) return
+  store.patchbayFocusId = port.patchbayId
+  store.setTab('patchbay')
+  closePortsModal()
+}
+
+const patchTargetLabel = (port: DevicePort) => {
+  if (port.patchbayId === null) return ''
+  return t.devices.goToPatch(port.patchbayId)
+}
+
+const openDeleteConfirmation = (device: Device) => {
+  if (props.floatingMode) {
+    const parentId = props.modalParentWindowId || windowManager.getToolWindow('devices')?.id || 'tool:devices'
+    windowManager.openChildWindow(
+      parentId,
+      'devices-delete-confirm',
+      t.confirm.deleteDeviceTitle,
+      {
+        deviceId: device.id,
+        deviceName: device.name,
+      },
+      { forceUnique: true },
+    )
+    return
+  }
+  inlineDeleteTarget.value = device
+  inlineDeleteConfirmInput.value = ''
+}
+
+const handleDeleteSelected = () => {
+  if (!editableSelectedDevice.value) return
+  openDeleteConfirmation(editableSelectedDevice.value)
+}
+
+const closeInlineDeleteModal = () => {
+  inlineDeleteTarget.value = null
+  inlineDeleteConfirmInput.value = ''
+}
+
+const confirmInlineDelete = async () => {
+  if (!inlineDeleteTarget.value || !inlineCanConfirmDelete.value) return
+  isLoading.value = true
+  try {
+    await store.deleteDevice(inlineDeleteTarget.value.id)
+    store.pushToast({ type: 'success', message: strings.toast.deviceDeleted })
+    const next = new Set(selectedDeviceIds.value)
+    next.delete(inlineDeleteTarget.value.id)
+    selectedDeviceIds.value = next
+    applySelectionToVisible()
+    closeInlineDeleteModal()
+  } catch (err: any) {
+    showError(err?.message || strings.toast.deviceDeleteFailed)
+  } finally {
+    isLoading.value = false
+  }
+}
+
+const handleTableKeydown = (event: KeyboardEvent) => {
+  const visible = sortedFilteredDevices.value
+  if (visible.length === 0) return
+
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+    event.preventDefault()
+    toggleSelectAllVisible()
+    return
+  }
+
+  const activeIndex = activeRowId.value === null ? -1 : visible.findIndex((device) => device.id === activeRowId.value)
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    const nextIndex = Math.min(activeIndex + 1, visible.length - 1)
+    const nextDevice = visible[nextIndex]
+    if (!nextDevice) return
+    activeRowId.value = nextDevice.id
+    return
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    const nextIndex = activeIndex <= 0 ? 0 : activeIndex - 1
+    const nextDevice = visible[nextIndex]
+    if (!nextDevice) return
+    activeRowId.value = nextDevice.id
+    return
+  }
+  if (event.key === ' ') {
+    if (activeRowId.value === null) return
+    event.preventDefault()
+    toggleRowSelection(activeRowId.value)
+    return
+  }
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    if (event.shiftKey) {
+      handleOpenPortsSelected()
+      return
+    }
+    handleEditSelected()
+  }
 }
 
 const normalizeDeviceCategory = (value: string | null | undefined, subtype?: string | null) => {
@@ -810,22 +1062,40 @@ const imageStatusLabel = (state: ReturnType<typeof getDeviceImageState>) => {
   return t.devices.imageLoading || 'Cargando...'
 }
 
-watch(filteredDevices, (devices) => {
+const editingPreviewDevice = computed(() => {
+  if (editingDeviceId.value === null) return null
+  return store.devices.find((item) => item.id === editingDeviceId.value) || null
+})
+
+watch(sortedFilteredDevices, (devices) => {
   const ids = new Set(devices.map(device => device.id))
   deviceImages.abortNotInSet(ids, orgId.value)
   schedulePrefetch(devices)
 }, { immediate: true })
 
-watch(() => selectedDevice.value?.id, () => {
-  if (selectedDevice.value) {
-    requestDeviceImage(selectedDevice.value)
+watch([sortedFilteredDevices, () => store.devices], () => {
+  applySelectionToVisible()
+}, { deep: true })
+
+watch(() => inlineDeleteTarget.value?.id, (deviceId) => {
+  if (!deviceId) return
+  const exists = store.devices.some((device) => device.id === deviceId)
+  if (!exists) {
+    closeInlineDeleteModal()
   }
+})
+
+watch(() => activeRowId.value, (deviceId) => {
+  if (!deviceId) return
+  const device = store.devices.find((item) => item.id === deviceId)
+  if (!device) return
+  requestDeviceImage(device)
 })
 
 watch(() => showAddModal.value, (open) => {
   if (!open) return
-  if (isEditing.value && selectedDevice.value?.imageUrl) {
-    requestDeviceImage(selectedDevice.value)
+  if (editingPreviewDevice.value?.imageUrl) {
+    requestDeviceImage(editingPreviewDevice.value)
   }
 })
 
@@ -988,11 +1258,6 @@ const handleAddDevice = async () => {
         ports,
       })
       deviceId = updated.id
-      
-      // Update selectedDevice reference
-      if (selectedDevice.value?.id === deviceId) {
-        selectedDevice.value = updated
-      }
     } else {
       const created = await store.addDevice({
         name: newDevice.value.name,
@@ -1019,11 +1284,6 @@ const handleAddDevice = async () => {
       try {
         isUploadingImage.value = true
         const updatedDevice = await store.uploadDeviceImage(deviceId, pendingImageFile.value)
-        
-        // Update selectedDevice reference if needed
-        if (selectedDevice.value?.id === deviceId) {
-          selectedDevice.value = updatedDevice
-        }
         requestDeviceImage(updatedDevice)
       } catch (imgErr: any) {
         showError(`Device saved, but image upload failed: ${imgErr.message || 'Unknown error'}`)
@@ -1046,87 +1306,6 @@ const handleAddDevice = async () => {
   }
 }
 
-const requestDeleteDevice = (device: Device) => {
-  if (props.floatingMode) {
-    const parentId = props.modalParentWindowId || windowManager.getToolWindow('devices')?.id || 'tool:devices'
-    windowManager.openChildWindow(
-      parentId,
-      'devices-delete-confirm',
-      t.confirm.deleteDeviceTitle,
-      {
-        deviceId: device.id,
-        deviceName: device.name,
-        sourceWindowId: props.modalOnly ? parentId : null,
-      },
-      { forceUnique: true },
-    )
-    return
-  }
-  deleteTarget.value = device
-}
-
-const confirmDeleteDevice = async () => {
-  if (!deleteTarget.value) return
-  isLoading.value = true
-  try {
-    await store.deleteDevice(deleteTarget.value.id)
-    store.pushToast({ type: 'success', message: strings.toast.deviceDeleted })
-    if (selectedDevice.value?.id === deleteTarget.value.id) {
-      closeDetail()
-    }
-  } catch (err: any) {
-    showError(err.message || strings.toast.deviceDeleteFailed)
-    console.error('Error deleting device:', err)
-  } finally {
-    isLoading.value = false
-    deleteTarget.value = null
-  }
-}
-
-const cancelDeleteDevice = () => {
-  deleteTarget.value = null
-}
-
-const isPortConnected = (port: DevicePort) => port.patchbayId !== null
-
-const linkPortToPatchbay = (port: DevicePort) => {
-  if (!selectedDevice.value) return
-  store.startLinkingPort(
-    {
-      portId: port.id,
-      deviceId: selectedDevice.value.id,
-      deviceName: selectedDevice.value.name,
-      portLabel: port.label,
-    },
-    {
-      returnTab: 'devices',
-      returnPayload: { deviceId: selectedDevice.value.id },
-    },
-  )
-}
-
-const unlinkPortFromDevice = async (port: DevicePort) => {
-  if (!selectedDevice.value) return
-  await store.unlinkPort(selectedDevice.value.id, port.id)
-}
-
-const goToPatchPoint = (port: DevicePort) => {
-  if (port.patchbayId === null) return
-  store.patchbayFocusId = port.patchbayId
-  store.setTab('patchbay')
-}
-
-const patchTargetLabel = (port: DevicePort) => {
-  if (port.patchbayId === null) return ''
-  return t.devices.goToPatch(port.patchbayId)
-}
-
-const deviceClassificationLabel = (device: Device) => {
-  const subtype = normalizeDeviceType(device.type, device.category)
-  if (!subtype || subtype === 'other') return device.category
-  return `${device.category} · ${subtype}`
-}
-
 watch([newDevice, newPorts], () => {
   if (showAddModal.value && !isEditing.value) {
     saveDraft()
@@ -1140,14 +1319,13 @@ watch(() => store.focusDeviceId, (deviceId) => {
     if (props.floatingMode) {
       props.onOpenDetailWindow?.(device.id)
     } else {
-      selectedDevice.value = device
+      setOnlySelectedRow(device.id)
     }
   }
   store.clearDeviceFocus()
 })
 
 onBeforeUnmount(() => {
-  window.removeEventListener('resize', updateViewport)
   if (observer.value) {
     observer.value.disconnect()
   }
@@ -1184,126 +1362,114 @@ onMounted(() => {
           :placeholder="t.devices.searchPlaceholder"
           class="search-input"
         />
-        <button class="add-btn" @click="openAddModal">{{ t.devices.addDevice }}</button>
       </div>
     </div>
     </template>
 
-    <div v-if="!props.modalOnly" class="devices-layout">
-      <div class="devices-list">
-        <div
-          v-for="device in filteredDevices"
-          :key="device.id"
-          class="device-card"
-          :class="{ active: selectedDevice?.id === device.id }"
-          :ref="registerDeviceCard(device.id)"
-          @click="selectDevice(device)"
-        >
-          <div v-if="device.imageUrl" class="device-thumbnail">
-            <img
-              v-if="getDeviceImageState(device).status === 'loaded' && getDeviceImageState(device).src"
-              :src="getDeviceImageState(device).src || ''"
-              :alt="device.name"
-              loading="lazy"
-            />
-            <div
-              v-else
-              class="device-thumbnail-placeholder"
-              :class="{ 'is-loading': isImageLoading(getDeviceImageState(device)) }"
-            >
-              <div v-if="isImageLoading(getDeviceImageState(device))" class="image-skeleton"></div>
-              <div v-else class="image-fallback">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                  <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                  <polyline points="21 15 16 10 5 21"></polyline>
-                </svg>
-                <span class="image-status">{{ imageStatusLabel(getDeviceImageState(device)) }}</span>
-                <button
-                  v-if="isImageRetryable(getDeviceImageState(device))"
-                  class="retry-btn"
-                  type="button"
-                  @click.stop="retryDeviceImage(device)"
-                >
-                  {{ t.app.retry }}
-                </button>
-              </div>
-            </div>
-          </div>
-          <div v-else class="device-thumbnail-placeholder">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-              <circle cx="8.5" cy="8.5" r="1.5"></circle>
-              <polyline points="21 15 16 10 5 21"></polyline>
-            </svg>
-          </div>
-          <div class="device-header">
-            <h3>{{ device.name }}</h3>
-            <div class="device-meta">
-              <span class="device-type">{{ deviceClassificationLabel(device) }}</span>
-              <button class="edit-btn" @click.stop="openEditModal(device)" :aria-label="t.devices.editDevice">
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M4 16.25V20h3.75L19.81 7.94l-3.75-3.75L4 16.25zm14.71-9.46a1 1 0 0 0 0-1.41l-1.09-1.09a1 1 0 0 0-1.41 0l-1.13 1.13 3.75 3.75 1.88-1.88z"/>
-                </svg>
-              </button>
-            </div>
-          </div>
-          <div class="device-info">
-            <span>{{ t.devices.portsCount(device.ports.length) }}</span>
-          </div>
-        </div>
+    <div
+      v-if="!props.modalOnly"
+      class="devices-table-layout"
+      tabindex="0"
+      @keydown="handleTableKeydown"
+    >
+      <div class="devices-toolbar">
+        <button class="add-btn" type="button" @click="openAddModal">{{ t.devices.addDevice }}</button>
+        <button class="ghost-btn edit-toolbar-btn" type="button" :disabled="!canEditSelection" @click="handleEditSelected">
+          {{ t.devices.editDevice }}
+        </button>
+        <button class="ghost-btn edit-toolbar-btn" type="button" :disabled="!canOpenPortsSelection" @click="handleOpenPortsSelected">
+          {{ t.devices.portsLabel }}
+        </button>
+        <button class="ghost-btn edit-toolbar-btn delete-toolbar-btn" type="button" :disabled="!canDeleteSelection" @click="handleDeleteSelected">
+          {{ t.devices.deleteDevice }}
+        </button>
+        <span class="selection-label">{{ selectedRowsLabel }}</span>
       </div>
 
-      <div v-if="selectedDevice && isDesktop && !props.floatingMode" class="device-detail-panel">
-        <div class="panel-header">
-          <div class="panel-title">
-            <h3>{{ selectedDevice.name }}</h3>
-            <span class="device-type">{{ deviceClassificationLabel(selectedDevice) }}</span>
-          </div>
-          <div class="panel-actions">
-            <button class="ghost-btn" @click="openEditModal(selectedDevice)">{{ t.devices.editDevice }}</button>
-            <button class="ghost-btn" @click="closeDetail">{{ t.devices.closeDetail }}</button>
-          </div>
+      <div class="devices-table-wrap">
+        <table class="devices-table">
+          <thead>
+            <tr>
+              <th class="col-select">
+                <input
+                  type="checkbox"
+                  :checked="areAllVisibleSelected"
+                  :indeterminate.prop="areSomeVisibleSelected"
+                  @change="toggleSelectAllVisible"
+                />
+              </th>
+              <th>Name</th>
+              <th>Category</th>
+              <th>Type</th>
+              <th>Tags</th>
+              <th class="col-num">Ports</th>
+              <th class="col-num">Linked</th>
+              <th>Status</th>
+              <th>Updated</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="device in sortedFilteredDevices"
+              :key="device.id"
+              :ref="registerDeviceCard(device.id)"
+              :class="{ selected: isRowSelected(device.id), active: activeRowId === device.id }"
+              @click="setOnlySelectedRow(device.id)"
+            >
+              <td class="col-select" @click.stop>
+                <input
+                  type="checkbox"
+                  :checked="isRowSelected(device.id)"
+                  @change="toggleRowSelection(device.id)"
+                />
+              </td>
+              <td class="device-name-cell">{{ device.name }}</td>
+              <td>{{ device.category }}</td>
+              <td>{{ normalizeDeviceType(device.type, device.category) }}</td>
+              <td class="tags-cell">
+                <span v-for="tag in visibleTags(device)" :key="`${device.id}-${tag}`" class="tag-chip">{{ tag }}</span>
+                <span v-if="hiddenTagsCount(device) > 0" class="tag-chip muted">+{{ hiddenTagsCount(device) }}</span>
+                <span v-if="(device.tags || []).length === 0" class="text-muted">-</span>
+              </td>
+              <td class="col-num">{{ device.ports.length }}</td>
+              <td class="col-num">{{ linkedPortsCount(device) }}/{{ device.ports.length }}</td>
+              <td>
+                <span class="image-status-hover">
+                  <span class="status-pill">{{ imageStatusBadge(device) }}</span>
+                  <span
+                    v-if="imageStatusBadge(device) === 'Loaded' && getDeviceImageState(device).src"
+                    class="image-preview-popover"
+                    aria-hidden="true"
+                  >
+                    <img :src="getDeviceImageState(device).src || ''" :alt="device.name" />
+                    <span class="image-preview-caption">{{ device.name }}</span>
+                  </span>
+                </span>
+              </td>
+              <td>{{ formatUpdatedAt(device) }}</td>
+            </tr>
+            <tr v-if="sortedFilteredDevices.length === 0">
+              <td colspan="9" class="empty-row">No devices found.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div v-if="portsModalDevice && !props.floatingMode" class="modal-overlay" @click="closePortsModal">
+      <div class="modal-content" @click.stop>
+        <div class="modal-header">
+          <h2>{{ portsModalDevice.name }}</h2>
+          <button class="close-btn" @click="closePortsModal">{{ t.app.closeSymbol }}</button>
         </div>
 
         <div class="device-details">
-          <div v-if="selectedDevice.imageUrl" class="device-detail-image">
-            <img
-              v-if="getDeviceImageState(selectedDevice).status === 'loaded' && getDeviceImageState(selectedDevice).src"
-              :src="getDeviceImageState(selectedDevice).src || ''"
-              :alt="selectedDevice.name"
-            />
-            <div
-              v-else
-              class="device-detail-placeholder"
-              :class="{ 'is-loading': isImageLoading(getDeviceImageState(selectedDevice)) }"
-            >
-              <div v-if="isImageLoading(getDeviceImageState(selectedDevice))" class="image-skeleton"></div>
-              <div v-else class="image-fallback">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                  <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                  <polyline points="21 15 16 10 5 21"></polyline>
-                </svg>
-                <span class="image-status">{{ imageStatusLabel(getDeviceImageState(selectedDevice)) }}</span>
-                <button
-                  v-if="isImageRetryable(getDeviceImageState(selectedDevice))"
-                  class="retry-btn"
-                  type="button"
-                  @click.stop="retryDeviceImage(selectedDevice)"
-                >
-                  {{ t.app.retry }}
-                </button>
-              </div>
-            </div>
-          </div>
-          
-          <p><strong>{{ t.devices.typeLabel }}:</strong> {{ deviceClassificationLabel(selectedDevice) }}</p>
-          <p><strong>{{ t.devices.idLabel }}:</strong> {{ selectedDevice.id }}</p>
+          <p><strong>{{ t.devices.typeLabel }}:</strong> {{ normalizeDeviceType(portsModalDevice.type, portsModalDevice.category) }}</p>
+          <p><strong>{{ t.devices.idLabel }}:</strong> {{ portsModalDevice.id }}</p>
 
-          <h4>{{ t.devices.portsConfig }}</h4>
+          <h3>{{ t.devices.portsConfig }}</h3>
           <div class="ports-list">
-            <div v-for="port in selectedDevice.ports" :key="port.id" class="port-item">
+            <div v-for="port in portsModalDevice.ports" :key="port.id" class="port-item">
               <div class="port-info">
                 <span class="port-label">{{ port.label }}</span>
                 <span class="port-type">{{ t.devices.portTypes[port.type] }}</span>
@@ -1340,99 +1506,33 @@ onMounted(() => {
               </div>
             </div>
           </div>
-        </div>
-
-        <div class="panel-footer">
-          <button class="delete-btn" @click="requestDeleteDevice(selectedDevice)">{{ t.devices.deleteDevice }}</button>
         </div>
       </div>
     </div>
 
-    <div v-if="selectedDevice && !isDesktop && !props.floatingMode" class="modal-overlay" @click="closeDetail">
-      <div class="modal-content" @click.stop>
+    <div v-if="inlineDeleteTarget && !props.floatingMode" class="modal-overlay" @click="closeInlineDeleteModal">
+      <div class="modal-content delete-confirm-modal" @click.stop>
         <div class="modal-header">
-          <h2>{{ selectedDevice.name }}</h2>
-          <button class="close-btn" @click="closeDetail">{{ t.app.closeSymbol }}</button>
+          <h2>{{ t.confirm.deleteDeviceTitle }}</h2>
+          <button class="close-btn" @click="closeInlineDeleteModal">{{ t.app.closeSymbol }}</button>
         </div>
-
         <div class="device-details">
-          <div v-if="selectedDevice.imageUrl" class="device-detail-image">
-            <img
-              v-if="getDeviceImageState(selectedDevice).status === 'loaded' && getDeviceImageState(selectedDevice).src"
-              :src="getDeviceImageState(selectedDevice).src || ''"
-              :alt="selectedDevice.name"
-            />
-            <div
-              v-else
-              class="device-detail-placeholder"
-              :class="{ 'is-loading': isImageLoading(getDeviceImageState(selectedDevice)) }"
-            >
-              <div v-if="isImageLoading(getDeviceImageState(selectedDevice))" class="image-skeleton"></div>
-              <div v-else class="image-fallback">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
-                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
-                  <circle cx="8.5" cy="8.5" r="1.5"></circle>
-                  <polyline points="21 15 16 10 5 21"></polyline>
-                </svg>
-                <span class="image-status">{{ imageStatusLabel(getDeviceImageState(selectedDevice)) }}</span>
-                <button
-                  v-if="isImageRetryable(getDeviceImageState(selectedDevice))"
-                  class="retry-btn"
-                  type="button"
-                  @click.stop="retryDeviceImage(selectedDevice)"
-                >
-                  {{ t.app.retry }}
-                </button>
-              </div>
-            </div>
-          </div>
-          
-          <p><strong>{{ t.devices.typeLabel }}:</strong> {{ deviceClassificationLabel(selectedDevice) }}</p>
-          <p><strong>{{ t.devices.idLabel }}:</strong> {{ selectedDevice.id }}</p>
-
-          <h3>{{ t.devices.portsConfig }}</h3>
-          <div class="ports-list">
-            <div v-for="port in selectedDevice.ports" :key="port.id" class="port-item">
-              <div class="port-info">
-                <span class="port-label">{{ port.label }}</span>
-                <span class="port-type">{{ t.devices.portTypes[port.type] }}</span>
-              </div>
-
-              <div class="port-actions">
-                <span class="port-connection" :class="{ empty: !isPortConnected(port) }">
-                  {{ isPortConnected(port) ? t.devices.connected : t.devices.notConnected }}
-                </span>
-                <button
-                  v-if="port.patchbayId === null"
-                  class="link-action-btn link"
-                  type="button"
-                  @click="linkPortToPatchbay(port)"
-                >
-                  {{ t.devices.link }}
-                </button>
-                <button
-                  v-else
-                  class="link-action-btn ghost"
-                  type="button"
-                  @click="goToPatchPoint(port)"
-                >
-                  {{ patchTargetLabel(port) }}
-                </button>
-                <button
-                  v-if="port.patchbayId !== null"
-                  class="link-action-btn unlink"
-                  type="button"
-                  @click="unlinkPortFromDevice(port)"
-                >
-                  {{ t.devices.unlink }}
-                </button>
-              </div>
-            </div>
-          </div>
+          <p>{{ t.confirm.deleteDeviceMessage(inlineDeleteTarget.name) }}</p>
+          <p class="help-text">{{ t.confirm.deleteTypeToConfirm }}</p>
+          <input
+            v-model="inlineDeleteConfirmInput"
+            class="delete-confirm-input"
+            :placeholder="t.confirm.deleteInputPlaceholder"
+            :disabled="isLoading"
+          />
         </div>
-
         <div class="modal-actions">
-          <button class="delete-btn" @click="requestDeleteDevice(selectedDevice)">{{ t.devices.deleteDevice }}</button>
+          <button class="ghost-btn" type="button" :disabled="isLoading" @click="closeInlineDeleteModal">
+            {{ t.confirm.cancel }}
+          </button>
+          <button class="delete-btn" type="button" :disabled="!inlineCanConfirmDelete" @click="confirmInlineDelete">
+            {{ isLoading ? t.confirm.deleting : t.confirm.confirm }}
+          </button>
         </div>
       </div>
     </div>
@@ -1523,7 +1623,7 @@ onMounted(() => {
               <label>Device Image (optional)</label>
               <p class="help-text">Maximum 12MB. Supported formats: JPG, PNG, WebP</p>
               <label class="ai-upload-btn">
-                {{ pendingImagePreviewUrl || (isEditing && selectedDevice?.imageUrl) ? 'Change Image' : 'Upload Image' }}
+                {{ pendingImagePreviewUrl || (isEditing && editingPreviewDevice?.imageUrl) ? 'Change Image' : 'Upload Image' }}
                 <input 
                   type="file" 
                   accept="image/*" 
@@ -1535,30 +1635,30 @@ onMounted(() => {
               <div v-if="pendingImagePreviewUrl" class="ai-preview">
                 <img :src="pendingImagePreviewUrl" alt="Preview" />
               </div>
-              <div v-else-if="isEditing && selectedDevice?.imageUrl && !pendingImageFile" class="ai-preview">
+              <div v-else-if="isEditing && editingPreviewDevice?.imageUrl && !pendingImageFile" class="ai-preview">
                 <img
-                  v-if="getDeviceImageState(selectedDevice).status === 'loaded' && getDeviceImageState(selectedDevice).src"
-                  :src="getDeviceImageState(selectedDevice).src || ''"
-                  :alt="selectedDevice.name"
+                  v-if="editingPreviewDevice && getDeviceImageState(editingPreviewDevice).status === 'loaded' && getDeviceImageState(editingPreviewDevice).src"
+                  :src="editingPreviewDevice ? (getDeviceImageState(editingPreviewDevice).src || '') : ''"
+                  :alt="editingPreviewDevice?.name || ''"
                 />
                 <div
                   v-else
                   class="device-detail-placeholder"
-                  :class="{ 'is-loading': isImageLoading(getDeviceImageState(selectedDevice)) }"
+                  :class="{ 'is-loading': editingPreviewDevice ? isImageLoading(getDeviceImageState(editingPreviewDevice)) : false }"
                 >
-                  <div v-if="isImageLoading(getDeviceImageState(selectedDevice))" class="image-skeleton"></div>
+                  <div v-if="editingPreviewDevice && isImageLoading(getDeviceImageState(editingPreviewDevice))" class="image-skeleton"></div>
                   <div v-else class="image-fallback">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor">
                       <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                       <circle cx="8.5" cy="8.5" r="1.5"></circle>
                       <polyline points="21 15 16 10 5 21"></polyline>
                     </svg>
-                    <span class="image-status">{{ imageStatusLabel(getDeviceImageState(selectedDevice)) }}</span>
+                    <span class="image-status">{{ editingPreviewDevice ? imageStatusLabel(getDeviceImageState(editingPreviewDevice)) : (t.devices.imageMissing || 'No image') }}</span>
                     <button
-                      v-if="isImageRetryable(getDeviceImageState(selectedDevice))"
+                      v-if="editingPreviewDevice && isImageRetryable(getDeviceImageState(editingPreviewDevice))"
                       class="retry-btn"
                       type="button"
-                      @click.stop="retryDeviceImage(selectedDevice)"
+                      @click.stop="editingPreviewDevice && retryDeviceImage(editingPreviewDevice)"
                     >
                       {{ t.app.retry }}
                     </button>
@@ -1673,14 +1773,6 @@ onMounted(() => {
         </div>
       </div>
     </div>
-
-    <ConfirmDialog
-      v-if="deleteTarget && !props.floatingMode"
-      :title="t.confirm.deleteDeviceTitle"
-      :message="t.confirm.deleteDeviceMessage(deleteTarget.name)"
-      @confirm="confirmDeleteDevice"
-      @cancel="cancelDeleteDevice"
-    />
   </div>
 </template>
 
@@ -1689,6 +1781,9 @@ onMounted(() => {
   padding: var(--space-5);
   color: var(--text-primary);
   height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   overflow: auto;
   background: var(--surface-1);
   border-radius: var(--radius-3);
@@ -1697,7 +1792,7 @@ onMounted(() => {
 }
 
 .devices-container.floating-mode {
-  padding: 0;
+  padding: var(--space-3);
   background: transparent;
   border: none;
   box-shadow: none;
@@ -1725,18 +1820,21 @@ onMounted(() => {
 }
 
 .status-pill {
-  padding: 4px 10px;
-  border-radius: var(--radius-round);
-  background: rgba(212, 154, 79, 0.2);
-  border: 1px solid rgba(212, 154, 79, 0.5);
-  color: var(--warning);
-  font-size: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
 }
 
 .header-actions {
   display: flex;
   gap: var(--space-2);
   align-items: center;
+  width: 100%;
 }
 
 .search-input {
@@ -1756,6 +1854,184 @@ onMounted(() => {
   border-radius: var(--radius-2);
   cursor: pointer;
   font-weight: 600;
+}
+
+.devices-table-layout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  flex: 1;
+  min-height: 0;
+  outline: none;
+}
+
+.devices-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.selection-label {
+  margin-left: auto;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.edit-toolbar-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.delete-toolbar-btn {
+  border-color: rgba(213, 92, 92, 0.45);
+  color: #f2c2c2;
+}
+
+.delete-toolbar-btn:hover:not(:disabled) {
+  border-color: rgba(213, 92, 92, 0.8);
+  color: #ffd7d7;
+}
+
+.devices-table-wrap {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-2);
+  overflow: auto;
+  background: var(--surface-2);
+}
+
+.devices-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.9rem;
+}
+
+.devices-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  text-align: left;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  font-weight: 600;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.devices-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-default);
+  vertical-align: middle;
+  overflow: visible;
+}
+
+.devices-table tbody tr {
+  cursor: pointer;
+}
+
+.devices-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.devices-table tbody tr.selected {
+  background: rgba(61, 122, 88, 0.2);
+}
+
+.devices-table tbody tr.active {
+  outline: 1px solid rgba(212, 154, 79, 0.6);
+  outline-offset: -1px;
+}
+
+.col-select {
+  width: 36px;
+  text-align: center;
+}
+
+.col-num {
+  text-align: right;
+  width: 80px;
+}
+
+.device-name-cell {
+  font-weight: 600;
+}
+
+.tags-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-chip {
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: var(--surface-1);
+}
+
+.tag-chip.muted,
+.text-muted {
+  color: var(--text-muted);
+}
+
+.image-status-hover {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.image-preview-popover {
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  width: 210px;
+  padding: 8px;
+  border-radius: var(--radius-2);
+  border: 1px solid var(--border-default);
+  background: rgba(14, 13, 11, 0.97);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
+  display: grid;
+  gap: 6px;
+  z-index: 8;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease, visibility 120ms ease;
+}
+
+.image-status-hover:hover .image-preview-popover {
+  opacity: 1;
+  visibility: visible;
+}
+
+.image-preview-popover img {
+  width: 100%;
+  height: 126px;
+  object-fit: cover;
+  border-radius: var(--radius-1);
+  border: 1px solid var(--border-default);
+}
+
+.image-preview-caption {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.empty-row {
+  text-align: center;
+  color: var(--text-muted);
+  padding: 24px 12px;
 }
 
 .devices-layout {
@@ -1915,6 +2191,8 @@ onMounted(() => {
 .port-actions {
   display: flex;
   align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
 .port-connection {
@@ -1967,6 +2245,24 @@ onMounted(() => {
   padding: 8px 16px;
   border-radius: var(--radius-2);
   cursor: pointer;
+}
+
+.delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.delete-confirm-modal {
+  max-width: 480px;
+}
+
+.delete-confirm-input {
+  width: 100%;
+  background: var(--surface-1);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  border-radius: var(--radius-2);
+  padding: 8px 10px;
 }
 
 .modal-overlay {
@@ -2606,6 +2902,12 @@ onMounted(() => {
   }
 
   .device-detail-panel {
+    display: none;
+  }
+}
+
+@media (hover: none), (pointer: coarse) {
+  .image-preview-popover {
     display: none;
   }
 }

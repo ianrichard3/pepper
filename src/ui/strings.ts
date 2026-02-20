@@ -41,6 +41,10 @@ export const strings = {
     deleteDeviceTitle: 'Delete device?',
     deleteDeviceMessage: (deviceName: string) =>
       `Delete ${deviceName}? This cannot be undone.`,
+    deleteKeyword: 'delete',
+    deleteTypeToConfirm: 'Type "delete" to confirm.',
+    deleteInputPlaceholder: 'Type delete to confirm',
+    deleting: 'Deleting...',
   },
   toast: {
     linkedSuccess: (deviceName: string, portLabel: string, patchbayId: number) =>
