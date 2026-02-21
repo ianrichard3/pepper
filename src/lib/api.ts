@@ -1,6 +1,6 @@
 // API client for patchbay backend
 import { apiBaseUrl } from './authConfig'
-import { fetchWithAuth, requestJson, requestJsonWithMeta } from './apiClient'
+import { fetchWithAuth, requestJson, requestJsonAllowErrors, requestJsonWithMeta } from './apiClient'
 import type { CanvasEndpoint, CanvasPayload, CanvasEdge, CanvasNode } from '@/types/graph'
 import type { FeatureKey, LimitKey } from './entitlementKeys'
 
@@ -10,6 +10,28 @@ export interface ApiPatchbayPoint {
   name: string
   description: string
   type: string
+  location?: string | null
+  panel?: string | null
+  connector?: string | null
+  row?: number | null
+  col?: number | null
+  tag?: string | null
+}
+
+export interface ApiPatchbayTag {
+  id: number
+  name: string
+  slug: string
+  color: string
+}
+
+export interface ApiPatchbayViewConfig {
+  rows: number
+  cols: number
+  default_view: 'panel' | 'list'
+  panel_zoom?: number
+  panel_pan_x?: number
+  panel_pan_y?: number
 }
 
 export interface ApiPort {
@@ -454,6 +476,96 @@ export type FetchImageFn = (imageUrl: string, options?: { signal?: AbortSignal; 
 export const api = {
   async getState(): Promise<ApiState> {
     return requestJson<ApiState>('/state')
+  },
+
+  async listPatchbayPoints(query?: string): Promise<ApiPatchbayPoint[]> {
+    if (!query?.trim()) {
+      return requestJson<ApiPatchbayPoint[]>('/api/patchbay-points')
+    }
+    const params = new URLSearchParams({ q: query.trim() })
+    return requestJson<ApiPatchbayPoint[]>(`/api/patchbay-points?${params.toString()}`)
+  },
+
+  async createPatchbayPoint(payload: {
+    name: string
+    description?: string
+    type?: string
+    location?: string | null
+    panel?: string | null
+    connector?: string | null
+    row?: number | null
+    col?: number | null
+    tag?: string | null
+  }): Promise<ApiPatchbayPoint> {
+    return requestJson<ApiPatchbayPoint>('/api/patchbay-points', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async updatePatchbayPoint(
+    pointId: number,
+    payload: Partial<{
+      name: string
+      description: string
+      type: string
+      location: string | null
+      panel: string | null
+      connector: string | null
+      row: number | null
+      col: number | null
+      tag: string | null
+    }>
+  ): Promise<ApiPatchbayPoint> {
+    return requestJson<ApiPatchbayPoint>(`/api/patchbay-points/${pointId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async deletePatchbayPoint(pointId: number): Promise<{ deleted: boolean }> {
+    return requestJson<{ deleted: boolean }>(`/api/patchbay-points/${pointId}`, {
+      method: 'DELETE',
+    })
+  },
+
+  async deletePatchbayPointAllowConflict(pointId: number): Promise<{ ok: boolean; status: number; code?: string | null; message?: string | null }> {
+    const result = await requestJsonAllowErrors<{ deleted: boolean }>(`/api/patchbay-points/${pointId}`, { method: 'DELETE' }, [409])
+    if (result.status === 409) {
+      const code = result.errorJson?.detail?.code ?? null
+      const message = result.errorJson?.detail?.message ?? result.errorText ?? null
+      return { ok: false, status: 409, code, message }
+    }
+    return { ok: true, status: result.status }
+  },
+
+  async listPatchbayTags(): Promise<ApiPatchbayTag[]> {
+    return requestJson<ApiPatchbayTag[]>('/api/patchbay-tags')
+  },
+
+  async createPatchbayTag(payload: { name: string; color?: string }): Promise<ApiPatchbayTag> {
+    return requestJson<ApiPatchbayTag>('/api/patchbay-tags', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async getPatchbayViewConfig(): Promise<ApiPatchbayViewConfig> {
+    return requestJson<ApiPatchbayViewConfig>('/api/patchbay-view-config')
+  },
+
+  async putPatchbayViewConfig(payload: {
+    rows: number
+    cols: number
+    default_view: 'panel' | 'list'
+    panel_zoom: number
+    panel_pan_x: number
+    panel_pan_y: number
+  }): Promise<ApiPatchbayViewConfig> {
+    return requestJson<ApiPatchbayViewConfig>('/api/patchbay-view-config', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    })
   },
 
   async getGraph(): Promise<CanvasPayload> {

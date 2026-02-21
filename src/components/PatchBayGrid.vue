@@ -1,46 +1,61 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick } from 'vue'
-import { store, type PatchBayNode } from '../store'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { store, type PatchBayNode } from '@/store'
 import { windowManager } from '@/stores/windowManager'
-import { strings } from '../ui/strings'
+import { strings } from '@/ui/strings'
 
-const t = strings
 const props = withDefaults(defineProps<{ floatingMode?: boolean }>(), {
   floatingMode: false,
 })
-const nodes = computed(() => store.patchbayNodes)
+
+const MIN_PANEL_SCALE = 0.35
+const MAX_PANEL_SCALE = 2.5
+const DEFAULT_PANEL_SCALE = 1
+const DEFAULT_PANEL_PAN = { x: 40, y: 40 }
+const PANEL_CELL_W = 52
+const PANEL_CELL_H = 36
+const PANEL_GRID_GAP = 4
+const PANEL_ROW_LABEL_W = 46
+const PANEL_COL_LABEL_H = 24
+
+const t = strings
 const gridSearchQuery = ref('')
+const localRows = ref(store.patchbayRows)
+const localCols = ref(store.patchbayCols)
+const isSavingLayout = ref(false)
 
-const rowLabels = t.patchbay.rowLabels
-const columnLabels = Array.from({ length: 48 }, (_, index) => index + 1)
+const showForm = ref(false)
+const formMode = ref<'add' | 'edit'>('add')
+const formState = reactive({
+  id: 0,
+  name: '',
+  description: '',
+  type: 'standard',
+  panel: '',
+  row: '',
+  col: '',
+  connector: '',
+  location: '',
+  tag: '',
+})
+const tagInput = ref('')
+const tagDraftColor = ref('#4f6f95')
+const tagFieldRef = ref<HTMLElement | null>(null)
+const tagDropdownOpen = ref(false)
+const tagDropdownIndex = ref(0)
+const TAG_SWATCHES = ['#4f6f95', '#3d7a58', '#d49a4f', '#b04b3d', '#8f5ab6', '#2f8898', '#9c6b43', '#6f7f2e']
+const panelViewportRef = ref<HTMLElement | null>(null)
+const panelScale = ref(store.patchbayPanelZoom)
+const panelPan = reactive({ x: store.patchbayPanelPan.x, y: store.patchbayPanelPan.y })
+const isSpacePressed = ref(false)
+const isPanning = ref(false)
+const movedDuringPan = ref(false)
+const suppressCellClickOnce = ref(false)
+const panState = ref<null | { startClientX: number; startClientY: number; startPanX: number; startPanY: number }>(null)
+let panelPersistTimer: number | null = null
 
-// Helper to get connection info
-const getConnection = (patchbayId: number) => {
-  return store.getDeviceByPatchbayId(patchbayId)
-}
-
-const isLinked = (patchbayId: number) => {
-  return !!getConnection(patchbayId)
-}
-
-const isMatch = (node: PatchBayNode) => {
-  if (!gridSearchQuery.value) return false
-  const query = gridSearchQuery.value.toLowerCase()
-
-  if (node.name.toLowerCase().includes(query)) return true
-
-  const connection = getConnection(node.id)
-  if (connection) {
-    if (connection.device.name.toLowerCase().includes(query)) return true
-    if (connection.port.label.toLowerCase().includes(query)) return true
-  }
-
-  return false
-}
-
-const isHighlightedConnection = (patchbayId: number) => {
-  return store.highlightedPatchIds.includes(patchbayId)
-}
+const nodes = computed(() => store.patchbayNodes)
+const viewMode = computed(() => store.patchbayView)
 
 const selectionBannerText = computed(() => {
   if (store.pendingLink) {
@@ -49,17 +64,196 @@ const selectionBannerText = computed(() => {
   return t.patchbay.linkingFallback
 })
 
-const getSectionNodes = (sectionIndex: number) => {
-  return nodes.value.slice((sectionIndex - 1) * 96, sectionIndex * 96)
+const columnLabels = computed(() => Array.from({ length: store.patchbayCols }, (_, index) => index + 1))
+const rowIndexes = computed(() => Array.from({ length: store.patchbayRows }, (_, index) => index))
+
+const tagColorByName = computed(() => {
+  const out: Record<string, string> = {}
+  for (const tag of store.patchbayTags) {
+    out[tag.name.trim().toLowerCase()] = tag.color
+  }
+  return out
+})
+
+const panelOrderedNodes = computed(() => {
+  return [...nodes.value].sort((a, b) => {
+    const aRow = a.row ?? Number.MAX_SAFE_INTEGER
+    const bRow = b.row ?? Number.MAX_SAFE_INTEGER
+    if (aRow !== bRow) return aRow - bRow
+    const aCol = a.col ?? Number.MAX_SAFE_INTEGER
+    const bCol = b.col ?? Number.MAX_SAFE_INTEGER
+    if (aCol !== bCol) return aCol - bCol
+    return a.id - b.id
+  })
+})
+
+const panelSlots = computed(() => {
+  const total = store.patchbayRows * store.patchbayCols
+  return Array.from({ length: total }, (_, index) => panelOrderedNodes.value[index] || null)
+})
+
+const overflowCount = computed(() => {
+  const overflow = panelOrderedNodes.value.length - panelSlots.value.length
+  return overflow > 0 ? overflow : 0
+})
+
+const filteredListNodes = computed(() => {
+  const query = gridSearchQuery.value.trim().toLowerCase()
+  const sorted = [...nodes.value].sort((a, b) => a.id - b.id)
+  if (!query) return sorted
+  return sorted.filter((node) => {
+    const connection = getConnection(node.id)
+    const terms = [
+      String(node.id),
+      node.name,
+      node.description,
+      node.type,
+      node.panel || '',
+      node.connector || '',
+      node.location || '',
+      node.tag || '',
+      connection?.device.name || '',
+      connection?.port.label || '',
+    ].join(' ').toLowerCase()
+    return terms.includes(query)
+  })
+})
+
+const knownTagNames = computed(() => store.patchbayTags.map((item) => item.name))
+const filteredTagNames = computed(() => {
+  const token = tagInput.value.trim().toLowerCase()
+  if (!token) return knownTagNames.value
+  return knownTagNames.value.filter((name) => name.toLowerCase().includes(token))
+})
+const hasTagMatches = computed(() => filteredTagNames.value.length > 0)
+const selectedExistingTag = computed(() => store.getPatchbayTag(tagInput.value))
+const canCreateTag = computed(() => {
+  const token = tagInput.value.trim().toLowerCase()
+  if (!token) return false
+  return !store.patchbayTags.some((tag) => tag.name.trim().toLowerCase() === token)
+})
+const previewTagColor = computed(() => selectedExistingTag.value?.color || tagDraftColor.value)
+const panelZoomPercent = computed(() => `${Math.round(panelScale.value * 100)}%`)
+const panelStageStyle = computed(() => ({
+  transform: `translate(${panelPan.x}px, ${panelPan.y}px) scale(${panelScale.value})`,
+}))
+
+watch(
+  () => [store.patchbayRows, store.patchbayCols] as const,
+  ([rows, cols]) => {
+    localRows.value = rows
+    localCols.value = cols
+  },
+  { immediate: true },
+)
+
+watch(
+  () => [store.patchbayPanelZoom, store.patchbayPanelPan.x, store.patchbayPanelPan.y] as const,
+  ([zoom, panX, panY]) => {
+    panelScale.value = zoom
+    panelPan.x = panX
+    panelPan.y = panY
+  },
+  { immediate: true },
+)
+
+watch(() => store.patchbayFocusId, async (focusId) => {
+  if (!focusId) return
+  await nextTick()
+  const target = document.querySelector(`[data-patch-id="${focusId}"]`) as HTMLElement | null
+  if (target) {
+    target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+  }
+  store.patchbayFocusId = null
+})
+
+watch(filteredTagNames, (items) => {
+  if (items.length === 0) {
+    tagDropdownIndex.value = 0
+    return
+  }
+  if (tagDropdownIndex.value >= items.length) {
+    tagDropdownIndex.value = items.length - 1
+  }
+})
+
+const getConnection = (patchbayId: number) => store.getDeviceByPatchbayId(patchbayId)
+const isLinked = (patchbayId: number) => !!getConnection(patchbayId)
+const isHighlightedConnection = (patchbayId: number) => store.highlightedPatchIds.includes(patchbayId)
+
+const isMatch = (node: PatchBayNode | null) => {
+  if (!node || !gridSearchQuery.value.trim()) return false
+  const query = gridSearchQuery.value.toLowerCase()
+  if (node.name.toLowerCase().includes(query)) return true
+  if ((node.tag || '').toLowerCase().includes(query)) return true
+  const connection = getConnection(node.id)
+  if (connection) {
+    if (connection.device.name.toLowerCase().includes(query)) return true
+    if (connection.port.label.toLowerCase().includes(query)) return true
+  }
+  return false
 }
 
-const getCellTooltip = (patchbayId: number) => {
-  const connection = getConnection(patchbayId)
-  if (!connection) return ''
+const getTagColor = (tag: string | null | undefined): string | null => {
+  const token = String(tag || '').trim().toLowerCase()
+  if (!token) return null
+  return tagColorByName.value[token] || null
+}
+
+const tagStyle = (tag: string | null | undefined): Record<string, string> => {
+  const color = getTagColor(tag)
+  if (!color) return {}
+  return { '--tag-color': color }
+}
+
+const tagInitials = (tag: string | null | undefined) => {
+  const token = String(tag || '').trim()
+  if (!token) return ''
+  const words = token.split(/\s+/).filter(Boolean)
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase()
+  return `${words[0][0] || ''}${words[1][0] || ''}`.toUpperCase()
+}
+
+const getCellTooltip = (node: PatchBayNode | null) => {
+  if (!node) return ''
+  const connection = getConnection(node.id)
+  if (!connection) return node.name
   return t.patchbay.tooltip(connection.device.name, connection.port.label)
 }
 
-const handleCellClick = async (node: PatchBayNode) => {
+const getRowLabel = (rowIndex: number) => {
+  if (rowIndex < 26) return String.fromCharCode(65 + rowIndex)
+  return `R${rowIndex + 1}`
+}
+
+const openPointDetail = (patchbayId: number) => {
+  const parentWindowId = windowManager.getToolWindow('patchbay')?.id || 'tool:patchbay'
+  windowManager.openChildWindow(
+    parentWindowId,
+    'patchbay-point-detail',
+    t.patchbay.patchPointTitle(patchbayId),
+    { patchbayId, parentWindowId },
+    { id: `patchbay-point-detail:${patchbayId}` },
+  )
+}
+
+const openLinkSearch = (patchbayId: number) => {
+  const parentWindowId = windowManager.getToolWindow('patchbay')?.id || 'tool:patchbay'
+  windowManager.openChildWindow(
+    parentWindowId,
+    'patchbay-link-search',
+    t.patchbay.linkDeviceTitle(patchbayId),
+    { patchbayId, parentWindowId },
+    { id: `patchbay-link-search:${patchbayId}` },
+  )
+}
+
+const handleCellClick = async (node: PatchBayNode | null) => {
+  if (suppressCellClickOnce.value) {
+    suppressCellClickOnce.value = false
+    return
+  }
+  if (!node) return
   const parentWindowId = windowManager.getToolWindow('patchbay')?.id || 'tool:patchbay'
   if (store.selectionMode) {
     const existing = getConnection(node.id)
@@ -78,27 +272,373 @@ const handleCellClick = async (node: PatchBayNode) => {
       return
     }
     await store.completeLink(node.id)
-  } else {
-    windowManager.openChildWindow(
-      parentWindowId,
-      'patchbay-point-detail',
-      t.patchbay.patchPointTitle(node.id),
-      { patchbayId: node.id, parentWindowId },
-      { id: `patchbay-point-detail:${node.id}` },
-    )
+    return
+  }
+  openPointDetail(node.id)
+}
+
+const saveLayout = async () => {
+  const rows = Math.max(1, Math.min(24, Number(localRows.value) || 6))
+  const cols = Math.max(1, Math.min(96, Number(localCols.value) || 48))
+  isSavingLayout.value = true
+  try {
+    await store.savePatchbayViewConfig(rows, cols, viewMode.value, {
+      zoom: panelScale.value,
+      panX: panelPan.x,
+      panY: panelPan.y,
+    })
+    store.pushToast({ type: 'success', message: `${t.patchbay.rows}: ${rows}, ${t.patchbay.cols}: ${cols}` })
+  } catch (err: any) {
+    store.pushToast({ type: 'error', message: err?.message || t.toast.loadFailed })
+  } finally {
+    isSavingLayout.value = false
   }
 }
 
-// Search Logic
-watch(() => store.patchbayFocusId, async (focusId) => {
-  if (!focusId) return
-  await nextTick()
-  const target = document.querySelector(`[data-patch-id=\"${focusId}\"]`) as HTMLElement | null
-  if (target) {
-    target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' })
+const switchView = async (target: 'panel' | 'list') => {
+  if (viewMode.value === target) return
+  store.setPatchbayView(target)
+  try {
+    await store.savePatchbayViewConfig(store.patchbayRows, store.patchbayCols, target, {
+      zoom: panelScale.value,
+      panX: panelPan.x,
+      panY: panelPan.y,
+    })
+  } catch (err: any) {
+    store.pushToast({ type: 'error', message: err?.message || t.toast.loadFailed })
   }
-  store.patchbayFocusId = null
+}
+
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
+
+const syncPanelTransformToStore = () => {
+  store.patchbayPanelZoom = panelScale.value
+  store.patchbayPanelPan = { x: panelPan.x, y: panelPan.y }
+}
+
+const persistPanelTransform = async () => {
+  syncPanelTransformToStore()
+  try {
+    await store.savePatchbayViewConfig(store.patchbayRows, store.patchbayCols, store.patchbayView, {
+      zoom: panelScale.value,
+      panX: panelPan.x,
+      panY: panelPan.y,
+    })
+  } catch (err: any) {
+    store.pushToast({ type: 'error', message: err?.message || t.toast.loadFailed })
+  }
+}
+
+const schedulePanelTransformPersist = () => {
+  syncPanelTransformToStore()
+  if (panelPersistTimer) window.clearTimeout(panelPersistTimer)
+  panelPersistTimer = window.setTimeout(() => {
+    void persistPanelTransform()
+  }, 320)
+}
+
+const adjustScaleAt = (nextScaleRaw: number, clientX: number, clientY: number) => {
+  const viewport = panelViewportRef.value
+  if (!viewport) return
+  const rect = viewport.getBoundingClientRect()
+  const cursorX = clientX - rect.left
+  const cursorY = clientY - rect.top
+  const nextScale = clamp(nextScaleRaw, MIN_PANEL_SCALE, MAX_PANEL_SCALE)
+  if (Math.abs(nextScale - panelScale.value) < 0.0001) return
+  const worldX = (cursorX - panelPan.x) / panelScale.value
+  const worldY = (cursorY - panelPan.y) / panelScale.value
+  panelScale.value = nextScale
+  panelPan.x = cursorX - worldX * nextScale
+  panelPan.y = cursorY - worldY * nextScale
+  schedulePanelTransformPersist()
+}
+
+const onPanelWheel = (event: WheelEvent) => {
+  if (!(event.ctrlKey || event.metaKey)) return
+  event.preventDefault()
+  const zoomFactor = event.deltaY > 0 ? 0.92 : 1.08
+  adjustScaleAt(panelScale.value * zoomFactor, event.clientX, event.clientY)
+}
+
+const beginPan = (event: PointerEvent) => {
+  isPanning.value = true
+  movedDuringPan.value = false
+  panState.value = {
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startPanX: panelPan.x,
+    startPanY: panelPan.y,
+  }
+}
+
+const onPanelPointerDown = (event: PointerEvent) => {
+  const shouldPanWithLeft = event.button === 0 && isSpacePressed.value
+  const shouldPanWithMiddle = event.button === 1
+  if (!(shouldPanWithLeft || shouldPanWithMiddle)) return
+  event.preventDefault()
+  beginPan(event)
+}
+
+const onGlobalPointerMove = (event: PointerEvent) => {
+  if (!isPanning.value || !panState.value) return
+  const dx = event.clientX - panState.value.startClientX
+  const dy = event.clientY - panState.value.startClientY
+  panelPan.x = panState.value.startPanX + dx
+  panelPan.y = panState.value.startPanY + dy
+  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) movedDuringPan.value = true
+}
+
+const onGlobalPointerUp = () => {
+  if (!isPanning.value) return
+  isPanning.value = false
+  panState.value = null
+  if (movedDuringPan.value) {
+    suppressCellClickOnce.value = true
+  }
+  movedDuringPan.value = false
+  schedulePanelTransformPersist()
+}
+
+const onGlobalKeyDown = (event: KeyboardEvent) => {
+  const target = event.target as HTMLElement | null
+  if (
+    target &&
+    (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+  ) {
+    return
+  }
+  if (event.code === 'Space') {
+    isSpacePressed.value = true
+    event.preventDefault()
+  }
+}
+
+const onGlobalKeyUp = (event: KeyboardEvent) => {
+  if (event.code === 'Space') {
+    isSpacePressed.value = false
+  }
+}
+
+const zoomIn = () => {
+  const viewport = panelViewportRef.value
+  if (!viewport) return
+  const rect = viewport.getBoundingClientRect()
+  adjustScaleAt(panelScale.value * 1.08, rect.left + rect.width / 2, rect.top + rect.height / 2)
+}
+
+const zoomOut = () => {
+  const viewport = panelViewportRef.value
+  if (!viewport) return
+  const rect = viewport.getBoundingClientRect()
+  adjustScaleAt(panelScale.value * 0.92, rect.left + rect.width / 2, rect.top + rect.height / 2)
+}
+
+const resetPanelView = () => {
+  panelScale.value = DEFAULT_PANEL_SCALE
+  panelPan.x = DEFAULT_PANEL_PAN.x
+  panelPan.y = DEFAULT_PANEL_PAN.y
+  schedulePanelTransformPersist()
+}
+
+const fitPanelToViewport = () => {
+  const viewport = panelViewportRef.value
+  if (!viewport) return
+  const rect = viewport.getBoundingClientRect()
+  const gridWidth = PANEL_ROW_LABEL_W + store.patchbayCols * PANEL_CELL_W + store.patchbayCols * PANEL_GRID_GAP
+  const gridHeight = PANEL_COL_LABEL_H + store.patchbayRows * PANEL_CELL_H + store.patchbayRows * PANEL_GRID_GAP
+  const padding = 24
+  const targetScale = clamp(
+    Math.min((rect.width - padding * 2) / gridWidth, (rect.height - padding * 2) / gridHeight),
+    MIN_PANEL_SCALE,
+    MAX_PANEL_SCALE,
+  )
+  panelScale.value = targetScale
+  panelPan.x = (rect.width - gridWidth * targetScale) / 2
+  panelPan.y = (rect.height - gridHeight * targetScale) / 2
+  schedulePanelTransformPersist()
+}
+
+const openTagDropdown = () => {
+  tagDropdownOpen.value = true
+  tagDropdownIndex.value = 0
+}
+
+const closeTagDropdown = () => {
+  tagDropdownOpen.value = false
+}
+
+const selectTag = (name: string) => {
+  tagInput.value = name
+  formState.tag = name
+  const existing = store.getPatchbayTag(name)
+  if (existing?.color) {
+    tagDraftColor.value = existing.color
+  }
+  closeTagDropdown()
+}
+
+const handleTagKeydown = (event: KeyboardEvent) => {
+  if (!tagDropdownOpen.value && ['ArrowDown', 'ArrowUp', 'Enter'].includes(event.key)) {
+    openTagDropdown()
+  }
+  if (!tagDropdownOpen.value) return
+  if (event.key === 'ArrowDown') {
+    event.preventDefault()
+    if (!filteredTagNames.value.length) return
+    tagDropdownIndex.value = Math.min(tagDropdownIndex.value + 1, filteredTagNames.value.length - 1)
+    return
+  }
+  if (event.key === 'ArrowUp') {
+    event.preventDefault()
+    if (!filteredTagNames.value.length) return
+    tagDropdownIndex.value = Math.max(tagDropdownIndex.value - 1, 0)
+    return
+  }
+  if (event.key === 'Enter' && filteredTagNames.value.length) {
+    event.preventDefault()
+    const chosen = filteredTagNames.value[tagDropdownIndex.value]
+    if (chosen) selectTag(chosen)
+    return
+  }
+  if (event.key === 'Escape') {
+    closeTagDropdown()
+  }
+}
+
+const handleOutsideClick = (event: Event) => {
+  const target = event.target as Node | null
+  if (!target) return
+  if (!tagFieldRef.value?.contains(target)) {
+    closeTagDropdown()
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('pointerdown', handleOutsideClick)
+  window.addEventListener('pointermove', onGlobalPointerMove)
+  window.addEventListener('pointerup', onGlobalPointerUp)
+  window.addEventListener('keydown', onGlobalKeyDown)
+  window.addEventListener('keyup', onGlobalKeyUp)
 })
+
+onBeforeUnmount(() => {
+  window.removeEventListener('pointerdown', handleOutsideClick)
+  window.removeEventListener('pointermove', onGlobalPointerMove)
+  window.removeEventListener('pointerup', onGlobalPointerUp)
+  window.removeEventListener('keydown', onGlobalKeyDown)
+  window.removeEventListener('keyup', onGlobalKeyUp)
+  if (panelPersistTimer) window.clearTimeout(panelPersistTimer)
+})
+
+const resetForm = () => {
+  formState.id = 0
+  formState.name = ''
+  formState.description = ''
+  formState.type = 'standard'
+  formState.panel = ''
+  formState.row = ''
+  formState.col = ''
+  formState.connector = ''
+  formState.location = ''
+  formState.tag = ''
+  tagInput.value = ''
+  tagDraftColor.value = TAG_SWATCHES[0]
+  closeTagDropdown()
+}
+
+const openAdd = () => {
+  formMode.value = 'add'
+  resetForm()
+  showForm.value = true
+}
+
+const openEdit = (node: PatchBayNode) => {
+  formMode.value = 'edit'
+  formState.id = node.id
+  formState.name = node.name
+  formState.description = node.description
+  formState.type = node.type
+  formState.panel = node.panel || ''
+  formState.row = node.row ? String(node.row) : ''
+  formState.col = node.col ? String(node.col) : ''
+  formState.connector = node.connector || ''
+  formState.location = node.location || ''
+  formState.tag = node.tag || ''
+  tagInput.value = node.tag || ''
+  tagDraftColor.value = getTagColor(node.tag) || TAG_SWATCHES[0]
+  closeTagDropdown()
+  showForm.value = true
+}
+
+const createTagFromInput = async () => {
+  const token = tagInput.value.trim()
+  if (!token) return
+  try {
+    const created = await store.ensurePatchbayTag(token, tagDraftColor.value)
+    formState.tag = created?.name || token
+    tagInput.value = formState.tag
+    closeTagDropdown()
+  } catch (err: any) {
+    store.pushToast({ type: 'error', message: err?.message || t.toast.loadFailed })
+  }
+}
+
+const saveForm = async () => {
+  if (!formState.name.trim()) {
+    store.pushToast({ type: 'error', message: 'Name is required.' })
+    return
+  }
+  const payload = {
+    name: formState.name.trim(),
+    description: formState.description.trim(),
+    type: formState.type.trim() || 'standard',
+    panel: formState.panel.trim() || null,
+    row: formState.row.trim() ? Number(formState.row) : null,
+    col: formState.col.trim() ? Number(formState.col) : null,
+    connector: formState.connector.trim() || null,
+    location: formState.location.trim() || null,
+    tag: (formState.tag || tagInput.value).trim() || null,
+  }
+  if (payload.tag) {
+    await store.ensurePatchbayTag(payload.tag, tagDraftColor.value)
+  }
+  try {
+    if (formMode.value === 'add') {
+      await store.createPatchbayPoint(payload)
+      store.pushToast({ type: 'success', message: 'Patchbay point created.' })
+    } else {
+      await store.updatePatchbayPoint(formState.id, payload)
+      store.pushToast({ type: 'success', message: 'Patchbay point updated.' })
+    }
+    showForm.value = false
+  } catch (err: any) {
+    store.pushToast({ type: 'error', message: err?.message || t.toast.loadFailed })
+  }
+}
+
+const removePoint = async (node: PatchBayNode) => {
+  if (!window.confirm(`Delete patchbay point #${node.id}?`)) return
+  try {
+    const result = await store.deletePatchbayPoint(node.id)
+    if (result.deleted) {
+      store.pushToast({ type: 'success', message: 'Patchbay point deleted.' })
+      return
+    }
+    if (result.blocked) {
+      store.pushToast({ type: 'error', message: t.patchbay.deleteBlocked })
+      return
+    }
+    store.pushToast({ type: 'error', message: result.message || t.toast.loadFailed })
+  } catch (err: any) {
+    store.pushToast({ type: 'error', message: err?.message || t.toast.loadFailed })
+  }
+}
+
+const unlinkFromList = async (patchbayId: number) => {
+  const link = getConnection(patchbayId)
+  if (!link) return
+  await store.unlinkPort(link.device.id, link.port.id)
+}
 </script>
 
 <template>
@@ -114,70 +654,204 @@ watch(() => store.patchbayFocusId, async (focusId) => {
         <button @click="store.highlightedPatchIds = []">{{ t.patchbay.clearHighlights }}</button>
       </div>
 
-      <div class="grid-controls">
-        <input
-          v-model="gridSearchQuery"
-          :placeholder="t.patchbay.searchPlaceholder"
-          class="grid-search-input"
-        />
-        <div class="grid-legend">
-          <span class="legend-title">{{ t.patchbay.legendTitle }}</span>
-          <span class="legend-chip linked">{{ t.patchbay.legendLinked }}</span>
-          <span class="legend-chip open">{{ t.patchbay.legendOpen }}</span>
-          <span class="legend-chip match">{{ t.patchbay.legendMatch }}</span>
-          <span class="legend-chip highlight">{{ t.patchbay.legendHighlight }}</span>
+      <div class="toolbar">
+        <div class="view-picker">
+          <button :class="{ active: viewMode === 'panel' }" @click="switchView('panel')">{{ t.patchbay.viewPanel }}</button>
+          <button :class="{ active: viewMode === 'list' }" @click="switchView('list')">{{ t.patchbay.viewList }}</button>
+        </div>
+
+        <div class="layout-controls">
+          <label>{{ t.patchbay.rows }} <input v-model.number="localRows" type="number" min="1" max="24" /></label>
+          <label>{{ t.patchbay.cols }} <input v-model.number="localCols" type="number" min="1" max="96" /></label>
+          <button :disabled="isSavingLayout" @click="saveLayout">{{ t.patchbay.saveLayout }}</button>
+        </div>
+
+        <input v-model="gridSearchQuery" :placeholder="t.patchbay.searchPlaceholder" class="grid-search-input" />
+      </div>
+    </div>
+
+    <div v-if="viewMode === 'panel'" class="panel-view">
+      <div class="panel-canvas-controls">
+        <p class="panel-canvas-hint">Space+drag or middle-drag to pan. Ctrl/Cmd+wheel to zoom.</p>
+        <div class="zoom-controls">
+          <button class="ghost-btn" @click="zoomOut">-</button>
+          <span class="zoom-label">{{ panelZoomPercent }}</span>
+          <button class="ghost-btn" @click="zoomIn">+</button>
+          <button class="ghost-btn" @click="resetPanelView">Reset</button>
+          <button class="ghost-btn" @click="fitPanelToViewport">Fit</button>
+        </div>
+      </div>
+      <div v-if="overflowCount > 0" class="overflow-warning">
+        {{ overflowCount }} points are outside the current {{ store.patchbayRows }}x{{ store.patchbayCols }} layout.
+      </div>
+      <div
+        ref="panelViewportRef"
+        class="panel-viewport"
+        :class="{ panning: isPanning || isSpacePressed }"
+        @wheel="onPanelWheel"
+        @pointerdown="onPanelPointerDown"
+      >
+        <div class="panel-stage" :style="panelStageStyle">
+          <div class="panel-grid" :style="{ '--cols': String(store.patchbayCols) }">
+            <div class="grid-corner"></div>
+            <div v-for="col in columnLabels" :key="`head-col-${col}`" class="grid-col-label">{{ col }}</div>
+
+            <template v-for="rowIndex in rowIndexes" :key="`row-${rowIndex}`">
+              <div class="grid-row-label">{{ getRowLabel(rowIndex) }}</div>
+              <div
+                v-for="col in columnLabels"
+                :key="`cell-${rowIndex}-${col}`"
+                class="grid-cell"
+                :class="{
+                  linked: isLinked(panelSlots[rowIndex * store.patchbayCols + (col - 1)]?.id || -1),
+                  open: !isLinked(panelSlots[rowIndex * store.patchbayCols + (col - 1)]?.id || -1),
+                  empty: !panelSlots[rowIndex * store.patchbayCols + (col - 1)],
+                  'highlight-match': isMatch(panelSlots[rowIndex * store.patchbayCols + (col - 1)] || null),
+                  'highlight-connection': isHighlightedConnection(panelSlots[rowIndex * store.patchbayCols + (col - 1)]?.id || -1),
+                }"
+                :style="tagStyle(panelSlots[rowIndex * store.patchbayCols + (col - 1)]?.tag)"
+                :data-patch-id="panelSlots[rowIndex * store.patchbayCols + (col - 1)]?.id || null"
+                :data-tooltip="getCellTooltip(panelSlots[rowIndex * store.patchbayCols + (col - 1)] || null) || null"
+                @click="handleCellClick(panelSlots[rowIndex * store.patchbayCols + (col - 1)] || null)"
+              >
+                <span class="cell-text">
+                  {{ panelSlots[rowIndex * store.patchbayCols + (col - 1)]?.id || '-' }}
+                </span>
+                <span
+                  v-if="panelSlots[rowIndex * store.patchbayCols + (col - 1)]?.tag"
+                  class="tag-pill"
+                >
+                  {{ tagInitials(panelSlots[rowIndex * store.patchbayCols + (col - 1)]?.tag) }}
+                </span>
+              </div>
+            </template>
+          </div>
         </div>
       </div>
     </div>
 
-    <div class="grid-wrapper">
-      <div v-for="sectionIndex in 3" :key="sectionIndex" class="grid-section" :class="'section-' + sectionIndex">
-        <div class="grid-corner"></div>
-        <div v-for="col in columnLabels" :key="`col-${sectionIndex}-${col}`" class="grid-col-label">
-          {{ col }}
-        </div>
-        <div class="grid-row-label">{{ rowLabels[0] }}</div>
-        <div
-          v-for="item in getSectionNodes(sectionIndex).slice(0, 48)"
-          :key="item.id"
-          class="grid-cell"
-          :class="{
-            linked: isLinked(item.id),
-            open: !isLinked(item.id),
-            'highlight-match': isMatch(item),
-            'highlight-connection': isHighlightedConnection(item.id),
-          }"
-          :data-patch-id="item.id"
-          :data-tooltip="getCellTooltip(item.id) || null"
-          @click="handleCellClick(item)"
-        >
-          <div class="cell-content">
-            <span class="cell-text">{{ item.id }}</span>
+    <div v-else class="list-view">
+      <div class="list-header">
+        <h3>{{ t.patchbay.listTitle }}</h3>
+        <button @click="openAdd">{{ t.patchbay.addPoint }}</button>
+      </div>
+
+      <table class="patchbay-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>{{ t.patchbay.fullName }}</th>
+            <th>{{ t.patchbay.typeLabel }}</th>
+            <th>Panel</th>
+            <th>Row</th>
+            <th>Col</th>
+            <th>Connector</th>
+            <th>Location</th>
+            <th>{{ t.patchbay.tagLabel }}</th>
+            <th>Status</th>
+            <th>{{ t.patchbay.connectedToLabel }}</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="node in filteredListNodes" :key="node.id">
+            <td>#{{ node.id }}</td>
+            <td>{{ node.name }}</td>
+            <td>{{ node.type }}</td>
+            <td>{{ node.panel || '-' }}</td>
+            <td>{{ node.row || '-' }}</td>
+            <td>{{ node.col || '-' }}</td>
+            <td>{{ node.connector || '-' }}</td>
+            <td>{{ node.location || '-' }}</td>
+            <td>
+              <span v-if="node.tag" class="tag-chip" :style="tagStyle(node.tag)">{{ node.tag }}</span>
+              <span v-else>-</span>
+            </td>
+            <td>{{ isLinked(node.id) ? t.patchbay.connectedStatus : t.patchbay.openStatus }}</td>
+            <td>
+              <template v-if="getConnection(node.id)">
+                {{ getConnection(node.id)?.device.name }} · {{ getConnection(node.id)?.port.label }}
+              </template>
+              <template v-else>-</template>
+            </td>
+            <td class="row-actions">
+              <button @click="openPointDetail(node.id)">View</button>
+              <button @click="openEdit(node)">{{ t.patchbay.editPoint }}</button>
+              <button v-if="!isLinked(node.id)" @click="openLinkSearch(node.id)">{{ t.patchbay.linkDevice }}</button>
+              <button v-else @click="unlinkFromList(node.id)">{{ t.patchbay.unlink }}</button>
+              <button class="danger" @click="removePoint(node)">{{ t.patchbay.deletePoint }}</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div v-if="showForm && viewMode === 'list'" class="modal-backdrop" @click.self="showForm = false">
+      <div class="modal">
+        <h3>{{ formMode === 'add' ? t.patchbay.addPoint : `${t.patchbay.editPoint} #${formState.id}` }}</h3>
+        <div class="form-grid">
+          <label>Name <input v-model="formState.name" /></label>
+          <label>Type <input v-model="formState.type" /></label>
+          <label>Panel <input v-model="formState.panel" /></label>
+          <label>Row <input v-model="formState.row" type="number" min="1" /></label>
+          <label>Col <input v-model="formState.col" type="number" min="1" /></label>
+          <label>Connector <input v-model="formState.connector" /></label>
+          <label>Location <input v-model="formState.location" /></label>
+          <div class="tag-field" ref="tagFieldRef">
+            <label>
+              {{ t.patchbay.tagLabel }}
+              <input
+                v-model="tagInput"
+                :placeholder="t.patchbay.newTagPlaceholder"
+                @focus="openTagDropdown"
+                @input="() => { formState.tag = tagInput; openTagDropdown() }"
+                @keydown="handleTagKeydown"
+              />
+            </label>
+            <div v-if="tagDropdownOpen && hasTagMatches" class="tag-dropdown">
+              <button
+                v-for="(tagName, idx) in filteredTagNames"
+                :key="tagName"
+                type="button"
+                class="tag-option"
+                :class="{ active: idx === tagDropdownIndex }"
+                @click="selectTag(tagName)"
+                @mouseenter="tagDropdownIndex = idx"
+              >
+                <span class="tag-dot" :style="{ background: getTagColor(tagName) || '#4f6f95' }"></span>
+                <span>{{ tagName }}</span>
+              </button>
+            </div>
+            <button v-if="canCreateTag" type="button" class="secondary tag-create-btn" @click="createTagFromInput">
+              {{ t.patchbay.createTag }} "{{ tagInput }}"
+            </button>
+            <div class="tag-color-controls">
+              <span class="tag-color-label">Color</span>
+              <div class="tag-swatches">
+                <button
+                  v-for="color in TAG_SWATCHES"
+                  :key="color"
+                  type="button"
+                  class="tag-swatch"
+                  :class="{ active: tagDraftColor.toLowerCase() === color.toLowerCase() }"
+                  :style="{ background: color }"
+                  @click="tagDraftColor = color"
+                ></button>
+              </div>
+              <div class="tag-color-custom">
+                <input v-model="tagDraftColor" type="color" />
+                <span class="tag-preview-chip" :style="{ '--tag-color': previewTagColor }">{{ tagInput.trim() || 'Tag' }}</span>
+              </div>
+            </div>
           </div>
+          <label class="full">Description <textarea v-model="formState.description" rows="3"></textarea></label>
         </div>
-        <div class="grid-row-label">{{ rowLabels[1] }}</div>
-        <div
-          v-for="item in getSectionNodes(sectionIndex).slice(48, 96)"
-          :key="item.id"
-          class="grid-cell"
-          :class="{
-            linked: isLinked(item.id),
-            open: !isLinked(item.id),
-            'highlight-match': isMatch(item),
-            'highlight-connection': isHighlightedConnection(item.id),
-          }"
-          :data-patch-id="item.id"
-          :data-tooltip="getCellTooltip(item.id) || null"
-          @click="handleCellClick(item)"
-        >
-          <div class="cell-content">
-            <span class="cell-text">{{ item.id }}</span>
-          </div>
+        <div class="form-actions">
+          <button class="secondary" @click="showForm = false">{{ t.confirm.cancel }}</button>
+          <button @click="saveForm">{{ t.confirm.confirm }}</button>
         </div>
       </div>
     </div>
-
-    
   </div>
 </template>
 
@@ -210,32 +884,8 @@ watch(() => store.patchbayFocusId, async (focusId) => {
   box-shadow: 0 0 0 2px rgba(61, 122, 88, 0.2);
 }
 
-.selection-banner {
-  background-color: rgba(61, 122, 88, 0.2);
-  color: var(--text-primary);
-  padding: var(--space-2) var(--space-3);
-  text-align: center;
-  font-weight: 600;
-  display: flex;
-  justify-content: center;
-  gap: var(--space-3);
-  align-items: center;
-  border-radius: var(--radius-2);
-  border: 1px solid rgba(61, 122, 88, 0.4);
-}
-
-.selection-banner button {
-  background: var(--surface-1);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-default);
-  padding: 4px 12px;
-  border-radius: var(--radius-2);
-  cursor: pointer;
-}
-
+.selection-banner,
 .highlight-banner {
-  background: linear-gradient(120deg, rgba(61, 122, 88, 0.3), rgba(212, 154, 79, 0.25));
-  color: var(--text-primary);
   padding: var(--space-2) var(--space-3);
   text-align: center;
   font-weight: 500;
@@ -244,365 +894,440 @@ watch(() => store.patchbayFocusId, async (focusId) => {
   gap: var(--space-3);
   align-items: center;
   border-radius: var(--radius-2);
+}
+
+.selection-banner {
+  background-color: rgba(61, 122, 88, 0.2);
+  border: 1px solid rgba(61, 122, 88, 0.4);
+}
+
+.highlight-banner {
+  background: linear-gradient(120deg, rgba(61, 122, 88, 0.3), rgba(212, 154, 79, 0.25));
   border: 1px solid rgba(212, 154, 79, 0.3);
 }
 
+.toolbar {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.view-picker,
+.layout-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.view-picker button,
+.layout-controls button,
+.selection-banner button,
 .highlight-banner button {
-  background: transparent;
-  color: var(--text-secondary);
   border: 1px solid var(--border-default);
-  padding: 4px 12px;
+  background: var(--surface-2);
+  color: var(--text-primary);
   border-radius: var(--radius-2);
+  padding: 6px 10px;
   cursor: pointer;
 }
 
-.grid-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  flex-wrap: wrap;
+.view-picker button.active {
+  background: rgba(61, 122, 88, 0.2);
+}
+
+.layout-controls input {
+  width: 72px;
 }
 
 .grid-search-input {
-  width: 100%;
-  max-width: 360px;
-  padding: 10px 12px;
-  background-color: var(--surface-2);
+  flex: 1;
+  min-width: 220px;
   border: 1px solid var(--border-default);
-  color: var(--text-primary);
   border-radius: var(--radius-2);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  padding: 8px 10px;
 }
 
-.grid-legend {
-  display: flex;
-  align-items: center;
+.panel-view {
+  display: grid;
   gap: var(--space-2);
+  min-height: 420px;
+}
+
+.panel-canvas-controls {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
   flex-wrap: wrap;
 }
 
-.legend-title {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
+.panel-canvas-hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
 }
 
-.legend-chip {
-  padding: 4px 10px;
-  border-radius: var(--radius-round);
+.zoom-controls {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.zoom-label {
+  min-width: 58px;
+  text-align: center;
   font-size: 0.8rem;
-  border: 1px solid var(--border-default);
   color: var(--text-secondary);
 }
 
-.legend-chip.linked {
-  border-color: rgba(106, 163, 111, 0.6);
+.ghost-btn {
+  border: 1px solid var(--border-default);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border-radius: var(--radius-2);
+  padding: 5px 10px;
+  cursor: pointer;
 }
 
-.legend-chip.open {
-  border-color: rgba(141, 135, 122, 0.6);
-}
-
-.legend-chip.match {
-  border-color: rgba(212, 154, 79, 0.6);
-}
-
-.legend-chip.highlight {
-  border-color: rgba(61, 122, 88, 0.7);
-}
-
-.grid-wrapper {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  width: 100%;
-}
-
-.grid-section {
-  display: grid;
-  grid-template-columns: 32px repeat(48, minmax(22px, 1fr));
-  grid-template-rows: auto repeat(2, minmax(28px, 1fr));
-  gap: 4px;
-  width: 100%;
-  min-width: 1280px;
+.panel-viewport {
   position: relative;
+  overflow: hidden;
+  min-height: 420px;
+  height: calc(100vh - 320px);
+  max-height: 760px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-2);
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--border-default) 55%, transparent) 1px, transparent 0) 0 0 / 16px 16px,
+    var(--surface-1);
+  cursor: default;
 }
 
-.grid-corner {
-  position: sticky;
+.panel-viewport.panning {
+  cursor: grab;
+}
+
+.panel-stage {
+  position: absolute;
   left: 0;
   top: 0;
-  background: var(--surface-1);
-  z-index: 2;
+  transform-origin: 0 0;
+  width: max-content;
 }
 
-.grid-col-label {
-  font-size: 0.65rem;
-  color: var(--text-muted);
-  text-align: center;
-  position: sticky;
-  top: 0;
-  background: var(--surface-1);
-  padding-bottom: 4px;
-  z-index: 2;
+.overflow-warning {
+  color: var(--warning);
+  font-size: 0.9rem;
 }
 
+.panel-grid {
+  --cell-w: 52px;
+  --row-label-w: 46px;
+  display: grid;
+  gap: 4px;
+  grid-template-columns: var(--row-label-w) repeat(var(--cols), var(--cell-w));
+  align-items: center;
+  width: max-content;
+}
+
+.grid-corner,
+.grid-col-label,
 .grid-row-label {
   font-size: 0.75rem;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   text-align: center;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: sticky;
-  left: 0;
-  background: var(--surface-1);
-  z-index: 1;
 }
 
 .grid-cell {
-  background-color: var(--surface-2);
+  position: relative;
+  min-height: 36px;
+  width: var(--cell-w);
+  border-radius: var(--radius-2);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-1);
-  cursor: pointer;
+  background: var(--surface-2);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background-color 0.2s, border-color 0.2s, transform 0.2s;
-  height: 34px;
-  position: relative;
+  cursor: pointer;
 }
 
-.grid-cell.open {
-  background-color: var(--surface-2);
+.grid-cell.empty {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .grid-cell.linked {
-  background-color: rgba(61, 122, 88, 0.25);
-  border-color: rgba(61, 122, 88, 0.6);
+  border-color: rgba(61, 122, 88, 0.65);
 }
 
-.grid-cell:hover {
-  border-color: rgba(212, 154, 79, 0.6);
-  transform: translateY(-1px);
-}
-
-.grid-cell[data-tooltip]:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  left: 50%;
-  top: -34px;
-  transform: translateX(-50%);
-  background: var(--surface-3);
-  color: var(--text-primary);
-  padding: 6px 10px;
-  border-radius: var(--radius-2);
-  border: 1px solid var(--border-default);
-  white-space: nowrap;
-  font-size: 0.75rem;
-  z-index: 20;
-  box-shadow: var(--shadow-1);
+.grid-cell.open {
+  border-color: var(--border-default);
 }
 
 .grid-cell.highlight-match {
-  background-color: rgba(212, 154, 79, 0.35);
-  border-color: rgba(212, 154, 79, 0.7);
-  box-shadow: 0 0 6px rgba(212, 154, 79, 0.3);
-  z-index: 1;
+  box-shadow: 0 0 0 2px rgba(212, 154, 79, 0.3);
 }
 
 .grid-cell.highlight-connection {
-  background-color: rgba(61, 122, 88, 0.6);
-  border-color: rgba(61, 122, 88, 0.9);
-  box-shadow: 0 0 18px rgba(61, 122, 88, 0.5);
-  z-index: 10;
-  animation: connection-pulse 1s ease-in-out infinite;
-  transform: scale(1.08);
-  border-width: 2px;
+  box-shadow: 0 0 0 2px rgba(99, 138, 193, 0.35);
 }
 
-.grid-cell.highlight-connection .cell-text {
-  font-weight: bold;
-  font-size: 0.75rem;
-}
-
-@keyframes connection-pulse {
-  0%, 100% {
-    box-shadow: 0 0 12px rgba(61, 122, 88, 0.5);
-  }
-  50% {
-    box-shadow: 0 0 18px rgba(106, 163, 111, 0.7);
-  }
+.grid-cell[style*="--tag-color"] {
+  background: color-mix(in srgb, var(--tag-color) 18%, var(--surface-2));
 }
 
 .cell-text {
-  font-size: 0.6rem;
-  color: var(--text-primary);
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-  padding: 1px;
+  font-size: 0.82rem;
 }
 
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(7, 6, 5, 0.7);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  z-index: 1000;
+.tag-pill {
+  position: absolute;
+  top: 2px;
+  right: 3px;
+  font-size: 0.64rem;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tag-color, #4f6f95) 24%, #fff);
 }
 
-.modal-content {
-  background-color: var(--surface-2);
-  padding: var(--space-5);
-  border-radius: var(--radius-3);
-  min-width: 300px;
-  box-shadow: var(--shadow-2);
-  color: var(--text-primary);
-  border: 1px solid var(--border-default);
+.list-view {
+  display: grid;
+  gap: var(--space-3);
 }
 
-.modal-content.search-modal {
-  width: 640px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  padding: 0;
-}
-
-.modal-header {
-  padding: var(--space-4);
-  border-bottom: 1px solid var(--border-default);
+.list-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
 }
 
-.close-btn {
-  background: none;
-  border: none;
-  color: var(--text-secondary);
-  font-size: 1.5rem;
-  cursor: pointer;
+.patchbay-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
 }
 
-.connection-status {
-  margin: var(--space-4) 0;
-  padding: var(--space-3);
-  background-color: var(--surface-1);
-  border-radius: var(--radius-2);
+.patchbay-table th,
+.patchbay-table td {
   border: 1px solid var(--border-default);
+  padding: 6px 8px;
+  text-align: left;
+  vertical-align: top;
 }
 
-.link-btn {
-  background-color: var(--accent);
-  color: #0c0e0b;
-  border: none;
-  padding: 8px 16px;
-  border-radius: var(--radius-2);
-  cursor: pointer;
-  margin-top: var(--space-2);
-  font-weight: 600;
-}
-
-.unlink-btn {
-  background-color: var(--danger);
-  color: #fdf7ee;
-  border: none;
-  padding: 8px 16px;
-  border-radius: var(--radius-2);
-  cursor: pointer;
-  margin-top: var(--space-2);
-}
-
-.close-btn-main {
-  margin-top: var(--space-3);
-  padding: 0.5rem 1rem;
-  background-color: var(--surface-3);
-  color: var(--text-primary);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-2);
-  cursor: pointer;
-}
-
-.search-input {
-  margin: var(--space-4);
-  padding: 10px;
-  background-color: var(--surface-1);
-  border: 1px solid var(--border-default);
-  color: var(--text-primary);
-  border-radius: var(--radius-2);
-}
-
-.device-search-list {
-  overflow-y: auto;
-  padding: 0 var(--space-4) var(--space-4) var(--space-4);
-}
-
-.search-device-item {
-  margin-bottom: var(--space-3);
-  background-color: var(--surface-1);
-  padding: var(--space-3);
-  border-radius: var(--radius-2);
-  border: 1px solid var(--border-default);
-}
-
-.device-name {
-  font-weight: bold;
-  margin-bottom: var(--space-2);
-  color: var(--text-primary);
-}
-
-.device-ports {
+.row-actions {
   display: flex;
+  gap: 6px;
   flex-wrap: wrap;
-  gap: var(--space-2);
 }
 
-.port-select-btn {
-  background-color: var(--surface-2);
+.row-actions button,
+.list-header button {
   border: 1px solid var(--border-default);
+  background: var(--surface-2);
+  border-radius: var(--radius-2);
   color: var(--text-primary);
   padding: 4px 8px;
-  border-radius: var(--radius-2);
   cursor: pointer;
+}
+
+.row-actions button.danger {
+  border-color: rgba(176, 75, 61, 0.45);
+  color: var(--danger);
+}
+
+.tag-chip {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--tag-color, #4f6f95) 24%, #fff);
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 999;
+}
+
+.modal {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: var(--surface-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-3);
+  padding: var(--space-4);
+  display: grid;
+  gap: var(--space-3);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.form-grid label {
+  display: grid;
+  gap: 6px;
   font-size: 0.85rem;
 }
 
-.port-select-btn:hover:not(:disabled) {
-  background-color: rgba(61, 122, 88, 0.25);
+.tag-field {
+  position: relative;
+  display: grid;
+  gap: 8px;
 }
 
-.port-select-btn.active {
-  background-color: var(--accent);
-  color: #0c0e0b;
-  border-color: var(--accent);
+.form-grid .full {
+  grid-column: 1 / -1;
 }
 
-.port-select-btn.occupied {
-  opacity: 0.5;
-  cursor: not-allowed;
-  background-color: var(--surface-2);
+.form-grid input,
+.form-grid textarea {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  padding: 8px 10px;
 }
 
-.occupied-tag {
-  font-size: 0.7rem;
-  color: var(--text-muted);
+.form-grid .secondary {
+  border: 1px solid var(--border-default);
+  background: var(--surface-2);
+  border-radius: var(--radius-2);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
 }
 
-@media (max-width: 960px) {
-  .main-container {
-    padding: var(--space-3);
-  }
+.tag-create-btn {
+  width: fit-content;
+}
 
-  .grid-section {
-    min-width: 960px;
+.tag-dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-2);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-1);
+  z-index: 20;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.tag-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  border-bottom: 1px solid var(--border-default);
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.tag-option:last-child {
+  border-bottom: none;
+}
+
+.tag-option:hover,
+.tag-option.active {
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface-1));
+}
+
+.tag-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.tag-color-controls {
+  display: grid;
+  gap: 8px;
+}
+
+.tag-color-label {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.tag-swatches {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.tag-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+
+.tag-swatch.active {
+  border-color: var(--text-primary);
+}
+
+.tag-color-custom {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tag-color-custom input[type='color'] {
+  width: 34px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-2);
+  background: transparent;
+}
+
+.tag-preview-chip {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  background: color-mix(in srgb, var(--tag-color, #4f6f95) 24%, #fff);
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.form-actions button {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-2);
+  padding: 8px 12px;
+  background: var(--surface-2);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+@media (max-width: 980px) {
+  .form-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>

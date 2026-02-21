@@ -1,5 +1,11 @@
 import { reactive } from 'vue'
-import { api, type ApiPort, type ApiDevice, type ApiPatchbayPoint } from '@/lib/api'
+import {
+  api,
+  type ApiDevice,
+  type ApiPatchbayPoint,
+  type ApiPatchbayTag,
+  type ApiPort,
+} from '@/lib/api'
 import { deviceImageCache } from '@/lib/deviceImageCache'
 import { strings } from '@/ui/strings'
 import type { CanvasEdge } from '@/types/graph'
@@ -10,7 +16,22 @@ export interface PatchBayNode {
   name: string;
   description: string;
   type: string;
+  location?: string | null;
+  panel?: string | null;
+  connector?: string | null;
+  row?: number | null;
+  col?: number | null;
+  tag?: string | null;
 }
+
+export interface PatchbayTag {
+  id: number;
+  name: string;
+  slug: string;
+  color: string;
+}
+
+export type PatchbayViewMode = 'panel' | 'list'
 
 export interface DevicePort {
   id: string;
@@ -157,6 +178,21 @@ function apiPatchbayToNode(apiPoint: ApiPatchbayPoint): PatchBayNode {
     name: apiPoint.name,
     description: apiPoint.description,
     type: apiPoint.type,
+    location: apiPoint.location ?? null,
+    panel: apiPoint.panel ?? null,
+    connector: apiPoint.connector ?? null,
+    row: apiPoint.row ?? null,
+    col: apiPoint.col ?? null,
+    tag: apiPoint.tag ?? null,
+  }
+}
+
+function apiPatchbayTagToTag(apiTag: ApiPatchbayTag): PatchbayTag {
+  return {
+    id: apiTag.id,
+    name: apiTag.name,
+    slug: apiTag.slug,
+    color: apiTag.color,
   }
 }
 
@@ -180,6 +216,12 @@ export const store = reactive({
   connections: [] as CanvasEdge[],
   highlightedPatchIds: [] as number[], // For connection finder highlighting
   patchbayFocusId: null as number | null,
+  patchbayRows: 6,
+  patchbayCols: 48,
+  patchbayView: 'panel' as PatchbayViewMode,
+  patchbayPanelZoom: 1,
+  patchbayPanelPan: { x: 40, y: 40 },
+  patchbayTags: [] as PatchbayTag[],
   connectionFinderState: {
     a: null as null | { deviceId: number; portId: string },
     b: null as null | { deviceId: number; portId: string },
@@ -212,9 +254,24 @@ export const store = reactive({
     
     const loadPromise = (async () => {
       try {
-        const state = await api.getState()
+        const [state, patchbayTags, patchbayViewConfig] = await Promise.all([
+          api.getState(),
+          api.listPatchbayTags(),
+          api.getPatchbayViewConfig(),
+        ])
         this.patchbayNodes = state.patchbay_points.map(apiPatchbayToNode)
         this.devices = state.devices.map(apiDeviceToDevice)
+        this.patchbayTags = patchbayTags.map(apiPatchbayTagToTag)
+        this.patchbayRows = patchbayViewConfig.rows
+        this.patchbayCols = patchbayViewConfig.cols
+        this.patchbayView = patchbayViewConfig.default_view
+        this.patchbayPanelZoom = Number.isFinite(patchbayViewConfig.panel_zoom as number)
+          ? Number(patchbayViewConfig.panel_zoom)
+          : 1
+        this.patchbayPanelPan = {
+          x: Number.isFinite(patchbayViewConfig.panel_pan_x as number) ? Number(patchbayViewConfig.panel_pan_x) : 40,
+          y: Number.isFinite(patchbayViewConfig.panel_pan_y as number) ? Number(patchbayViewConfig.panel_pan_y) : 40,
+        }
         await this.refreshConnections()
         this.projectPatchbayLinksFromConnections()
         this.hasLoadedInitialData = true
@@ -414,6 +471,12 @@ export const store = reactive({
     this.connections = []
     this.highlightedPatchIds = []
     this.patchbayFocusId = null
+    this.patchbayRows = 6
+    this.patchbayCols = 48
+    this.patchbayView = 'panel'
+    this.patchbayPanelZoom = 1
+    this.patchbayPanelPan = { x: 40, y: 40 }
+    this.patchbayTags = []
     this.connectionFinderState = {
       a: null,
       b: null,
@@ -758,6 +821,132 @@ export const store = reactive({
 
   clearLinkReturnPayload() {
     this.lastLinkReturnPayload = null
+  },
+
+  setPatchbayView(view: PatchbayViewMode) {
+    this.patchbayView = view
+  },
+
+  async savePatchbayViewConfig(
+    rows: number,
+    cols: number,
+    defaultView?: PatchbayViewMode,
+    panelTransform?: { zoom: number; panX: number; panY: number },
+  ) {
+    const nextView = defaultView ?? this.patchbayView
+    const nextZoom = panelTransform?.zoom ?? this.patchbayPanelZoom
+    const nextPanX = panelTransform?.panX ?? this.patchbayPanelPan.x
+    const nextPanY = panelTransform?.panY ?? this.patchbayPanelPan.y
+    const saved = await api.putPatchbayViewConfig({
+      rows,
+      cols,
+      default_view: nextView,
+      panel_zoom: nextZoom,
+      panel_pan_x: nextPanX,
+      panel_pan_y: nextPanY,
+    })
+    this.patchbayRows = saved.rows
+    this.patchbayCols = saved.cols
+    this.patchbayView = saved.default_view
+    this.patchbayPanelZoom = Number.isFinite(saved.panel_zoom as number) ? Number(saved.panel_zoom) : nextZoom
+    this.patchbayPanelPan = {
+      x: Number.isFinite(saved.panel_pan_x as number) ? Number(saved.panel_pan_x) : nextPanX,
+      y: Number.isFinite(saved.panel_pan_y as number) ? Number(saved.panel_pan_y) : nextPanY,
+    }
+  },
+
+  async refreshPatchbayPoints(searchQuery?: string) {
+    const rows = await api.listPatchbayPoints(searchQuery)
+    this.patchbayNodes = rows.map(apiPatchbayToNode)
+  },
+
+  async refreshPatchbayTags() {
+    const rows = await api.listPatchbayTags()
+    this.patchbayTags = rows.map(apiPatchbayTagToTag)
+  },
+
+  getPatchbayTag(name: string | null | undefined): PatchbayTag | null {
+    const token = String(name || '').trim().toLowerCase()
+    if (!token) return null
+    return this.patchbayTags.find((item) => item.name.trim().toLowerCase() === token) || null
+  },
+
+  async ensurePatchbayTag(name: string, color?: string): Promise<PatchbayTag | null> {
+    const normalized = name.trim()
+    if (!normalized) return null
+    const existing = this.getPatchbayTag(normalized)
+    if (existing) return existing
+    const created = await api.createPatchbayTag({ name: normalized, color })
+    const mapped = apiPatchbayTagToTag(created)
+    this.patchbayTags = [...this.patchbayTags, mapped].sort((a, b) => a.name.localeCompare(b.name))
+    return mapped
+  },
+
+  async createPatchbayPoint(payload: {
+    name: string
+    description?: string
+    type?: string
+    location?: string | null
+    panel?: string | null
+    connector?: string | null
+    row?: number | null
+    col?: number | null
+    tag?: string | null
+  }): Promise<PatchBayNode> {
+    const normalizedTag = String(payload.tag || '').trim() || null
+    if (normalizedTag) {
+      await this.ensurePatchbayTag(normalizedTag)
+    }
+    const created = await api.createPatchbayPoint({
+      ...payload,
+      tag: normalizedTag,
+    })
+    const mapped = apiPatchbayToNode(created)
+    this.patchbayNodes = [...this.patchbayNodes, mapped].sort((a, b) => a.id - b.id)
+    return mapped
+  },
+
+  async updatePatchbayPoint(
+    id: number,
+    payload: Partial<{
+      name: string
+      description: string
+      type: string
+      location: string | null
+      panel: string | null
+      connector: string | null
+      row: number | null
+      col: number | null
+      tag: string | null
+    }>
+  ): Promise<PatchBayNode> {
+    const normalizedTag = typeof payload.tag === 'string' ? (payload.tag.trim() || null) : payload.tag
+    if (typeof normalizedTag === 'string' && normalizedTag) {
+      await this.ensurePatchbayTag(normalizedTag)
+    }
+    const updated = await api.updatePatchbayPoint(id, {
+      ...payload,
+      tag: normalizedTag,
+    })
+    const mapped = apiPatchbayToNode(updated)
+    const index = this.patchbayNodes.findIndex((item) => item.id === id)
+    if (index !== -1) {
+      this.patchbayNodes[index] = mapped
+    }
+    return mapped
+  },
+
+  async deletePatchbayPoint(id: number): Promise<{ deleted: boolean; blocked?: boolean; message?: string | null }> {
+    const result = await api.deletePatchbayPointAllowConflict(id)
+    if (!result.ok && result.status === 409 && result.code === 'PATCHBAY_POINT_CONNECTED') {
+      return { deleted: false, blocked: true, message: result.message || null }
+    }
+    if (result.ok) {
+      const index = this.patchbayNodes.findIndex((item) => item.id === id)
+      if (index !== -1) this.patchbayNodes.splice(index, 1)
+      return { deleted: true }
+    }
+    return { deleted: false, message: result.message || 'Delete failed.' }
   },
 
   pushToast(payload: Omit<Toast, 'id'>) {
