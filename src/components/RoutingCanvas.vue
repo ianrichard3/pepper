@@ -53,6 +53,12 @@ interface NodeTemplate {
   details: string[];
   ports: NodePort[];
   deviceId?: number;
+  patchbayMeta?: {
+    tag?: string | null;
+    panel?: string | null;
+    row?: number | null;
+    col?: number | null;
+  };
 }
 
 interface CableDraft {
@@ -66,6 +72,14 @@ interface ExistingComponentInfo {
   componentHandles: string[];
   componentEdgeIds: number[];
   componentEdges: NonNullable<NodeCanvasConnectionsLookupStatus['component_edges']>;
+}
+
+interface PanelDragState {
+  panel: 'tools' | 'intent' | 'add';
+  startClientX: number;
+  startClientY: number;
+  startPanelX: number;
+  startPanelY: number;
 }
 
 const GRID_SIZE = 24
@@ -84,6 +98,9 @@ const INITIAL_NODES: CanvasNode[] = []
 const INITIAL_CABLES: CableConnection[] = []
 
 const boardRef = ref<HTMLElement | null>(null)
+const toolsPanelRef = ref<HTMLElement | null>(null)
+const intentPanelRef = ref<HTMLElement | null>(null)
+const addPanelRef = ref<HTMLElement | null>(null)
 const persistence = useNodeCanvasPersistence({ debounceMs: 600 })
 const hasMovedNodeDuringDrag = ref(false)
 const hasPannedDuringGesture = ref(false)
@@ -97,6 +114,7 @@ const nodes = ref<CanvasNode[]>(
 const cables = ref<CableConnection[]>(INITIAL_CABLES.map((cable) => ({ ...cable })))
 const dragging = ref<DragState | null>(null)
 const panning = ref<PanState | null>(null)
+const isSpacePressed = ref(false)
 const selectionBox = ref<SelectionBoxState | null>(null)
 const selectedNodeIds = ref<string[]>([])
 const primarySelectedNodeId = ref<string | null>(null)
@@ -104,6 +122,12 @@ const scale = ref(DEFAULT_SCALE)
 const pan = ref({ ...DEFAULT_PAN })
 
 const showAddModal = ref(false)
+const showIntentPanel = ref(true)
+const toolsPanel = ref({ x: 10, y: 10, minimized: false })
+const intentPanel = ref({ x: 10, y: 10 })
+const addPanel = ref({ x: 12, y: 84 })
+const panelDrag = ref<PanelDragState | null>(null)
+const panelPositionsInitialized = ref(false)
 const catalogTab = ref<'devices' | 'patchbay'>('devices')
 const addSearchQuery = ref('')
 
@@ -333,6 +357,71 @@ const startPanGesture = (event: PointerEvent) => {
   hasPannedDuringGesture.value = false
 }
 
+const shouldStartPanGesture = (event: PointerEvent) => {
+  return event.button === 1 || (event.button === 0 && isSpacePressed.value)
+}
+
+const clampPanelPosition = (panelEl: HTMLElement | null, x: number, y: number) => {
+  const boardEl = boardRef.value
+  if (!boardEl || !panelEl) return { x, y }
+  const margin = 8
+  const maxX = Math.max(margin, boardEl.clientWidth - panelEl.offsetWidth - margin)
+  const maxY = Math.max(margin, boardEl.clientHeight - panelEl.offsetHeight - margin)
+  return {
+    x: clamp(x, margin, maxX),
+    y: clamp(y, margin, maxY),
+  }
+}
+
+const initializePanelPositions = () => {
+  if (panelPositionsInitialized.value) return
+  const boardEl = boardRef.value
+  const toolsEl = toolsPanelRef.value
+  if (!boardEl || !toolsEl) return
+  const margin = 10
+  toolsPanel.value.x = Math.max(margin, boardEl.clientWidth - toolsEl.offsetWidth - margin)
+  toolsPanel.value.y = margin
+  intentPanel.value.x = margin
+  intentPanel.value.y = margin
+  addPanel.value.x = margin
+  addPanel.value.y = 84
+  panelPositionsInitialized.value = true
+}
+
+const startPanelDrag = (panel: 'tools' | 'intent' | 'add', event: PointerEvent) => {
+  if (event.button !== 0) return
+  if ((event.target as HTMLElement | null)?.closest('.panel-action-btn')) return
+  event.preventDefault()
+  event.stopPropagation()
+  const current = panel === 'tools' ? toolsPanel.value : panel === 'intent' ? intentPanel.value : addPanel.value
+  panelDrag.value = {
+    panel,
+    startClientX: event.clientX,
+    startClientY: event.clientY,
+    startPanelX: current.x,
+    startPanelY: current.y,
+  }
+}
+
+const clampPanelsToBoard = () => {
+  toolsPanel.value = {
+    ...toolsPanel.value,
+    ...clampPanelPosition(toolsPanelRef.value, toolsPanel.value.x, toolsPanel.value.y),
+  }
+  if (showIntentPanel.value) {
+    intentPanel.value = {
+      ...intentPanel.value,
+      ...clampPanelPosition(intentPanelRef.value, intentPanel.value.x, intentPanel.value.y),
+    }
+  }
+  if (showAddModal.value) {
+    addPanel.value = {
+      ...addPanel.value,
+      ...clampPanelPosition(addPanelRef.value, addPanel.value.x, addPanel.value.y),
+    }
+  }
+}
+
 const activeTooltipNode = computed(() => {
   const activeId = pinnedTooltipNodeId.value ?? hoverPreviewNodeId.value
   if (!activeId) return null
@@ -416,6 +505,12 @@ const patchbayCatalog = computed<NodeTemplate[]>(() => {
     subtitle: 'Patchbay Port',
     kind: 'patchbay',
     details: [point.description, `Type: ${point.type}`].filter((detail): detail is string => Boolean(detail)),
+    patchbayMeta: {
+      tag: point.tag ?? null,
+      panel: point.panel ?? null,
+      row: point.row ?? null,
+      col: point.col ?? null,
+    },
     ports: [{ id: `pb-${point.id}`, name: 'Signal', direction: 'io' }],
   }))
 })
@@ -455,6 +550,12 @@ const findPatchbayTemplateByHandle = (handle: string): NodeTemplate | null => {
     subtitle: 'Patchbay Port',
     kind: 'patchbay',
     details: [point.description, `Type: ${point.type}`].filter((detail): detail is string => Boolean(detail)),
+    patchbayMeta: {
+      tag: point.tag ?? null,
+      panel: point.panel ?? null,
+      row: point.row ?? null,
+      col: point.col ?? null,
+    },
     ports: [{ id: `pb-${point.id}`, name: 'Signal', direction: 'io' }],
   }
 }
@@ -468,7 +569,10 @@ const filteredCatalog = computed(() => {
   if (!query) return activeCatalog.value
 
   return activeCatalog.value.filter((item) => {
-    const haystack = `${item.title} ${item.subtitle} ${item.details.join(' ')} ${item.ports.map((port) => port.name).join(' ')}`.toLowerCase()
+    const patchbayMeta = item.patchbayMeta
+      ? `${patchbayLocationLabel(item) ?? ''} ${item.patchbayMeta.tag ?? ''}`
+      : ''
+    const haystack = `${item.title} ${item.subtitle} ${item.details.join(' ')} ${item.ports.map((port) => port.name).join(' ')} ${patchbayMeta}`.toLowerCase()
     return haystack.includes(query)
   })
 })
@@ -529,6 +633,25 @@ const clamp = (value: number, min: number, max: number) => {
 
 const snapToGrid = (value: number) => {
   return Math.round(value / GRID_SIZE) * GRID_SIZE
+}
+
+const normalizeWorldNodePlacement = (worldX: number, worldY: number) => {
+  const maxX = WORLD_WIDTH - NODE_WIDTH - BOARD_PADDING
+  const maxY = WORLD_HEIGHT - NODE_HEIGHT - BOARD_PADDING
+  return {
+    x: snapToGrid(clamp(worldX, BOARD_PADDING, maxX)),
+    y: snapToGrid(clamp(worldY, BOARD_PADDING, maxY)),
+  }
+}
+
+const patchbayLocationLabel = (item: NodeTemplate) => {
+  if (!item.patchbayMeta) return null
+  const parts: string[] = []
+  if (item.patchbayMeta.panel) parts.push(`Panel ${item.patchbayMeta.panel}`)
+  if (typeof item.patchbayMeta.row === 'number') parts.push(`R${item.patchbayMeta.row}`)
+  if (typeof item.patchbayMeta.col === 'number') parts.push(`C${item.patchbayMeta.col}`)
+  if (parts.length === 0) return null
+  return parts.join(' • ')
 }
 
 const mapStorePortDirection = (type: string): NodePort['direction'] => {
@@ -1024,7 +1147,7 @@ const onTooltipPointerLeave = () => {
 }
 
 const onNodePointerDown = (event: PointerEvent, node: CanvasNode) => {
-  if (event.button === 1) {
+  if (shouldStartPanGesture(event)) {
     event.preventDefault()
     startPanGesture(event)
     return
@@ -1096,8 +1219,14 @@ const onNodePointerDown = (event: PointerEvent, node: CanvasNode) => {
 const onBoardPointerDown = (event: PointerEvent) => {
   const target = event.target as HTMLElement | null
   if (!target) return
+  if (target.closest('.canvas-overlay')) return
+  if (shouldStartPanGesture(event)) {
+    event.preventDefault()
+    startPanGesture(event)
+    return
+  }
   if (target.closest('.node-card') || target.closest('.node-tooltip') || target.closest('.cable-tooltip')) return
-  if (event.button !== 0 && event.button !== 1) return
+  if (event.button !== 0) return
 
   event.preventDefault()
 
@@ -1122,10 +1251,28 @@ const onBoardPointerDown = (event: PointerEvent) => {
     return
   }
 
-  startPanGesture(event)
 }
 
 const onPointerMove = (event: PointerEvent) => {
+  if (panelDrag.value) {
+    const nextX = panelDrag.value.startPanelX + event.clientX - panelDrag.value.startClientX
+    const nextY = panelDrag.value.startPanelY + event.clientY - panelDrag.value.startClientY
+    if (panelDrag.value.panel === 'tools') {
+      const clamped = clampPanelPosition(toolsPanelRef.value, nextX, nextY)
+      toolsPanel.value.x = clamped.x
+      toolsPanel.value.y = clamped.y
+    } else if (panelDrag.value.panel === 'intent') {
+      const clamped = clampPanelPosition(intentPanelRef.value, nextX, nextY)
+      intentPanel.value.x = clamped.x
+      intentPanel.value.y = clamped.y
+    } else {
+      const clamped = clampPanelPosition(addPanelRef.value, nextX, nextY)
+      addPanel.value.x = clamped.x
+      addPanel.value.y = clamped.y
+    }
+    return
+  }
+
   if (cableDraft.value) {
     const pointerWorld = boardToWorld(event.clientX, event.clientY)
     cableDraft.value.cursorX = pointerWorld.x
@@ -1185,6 +1332,7 @@ const onPointerMove = (event: PointerEvent) => {
 }
 
 const onPointerUp = () => {
+  panelDrag.value = null
   const movedNode = hasMovedNodeDuringDrag.value
   const movedPan = hasPannedDuringGesture.value
   if (selectionBox.value) {
@@ -1202,8 +1350,28 @@ const onPointerUp = () => {
 
 const onBoardWheel = (event: WheelEvent) => {
   if (!boardRef.value) return
+  const target = event.target as HTMLElement | null
+  if (target?.closest('.canvas-add-panel') || target?.closest('.canvas-intent-panel')) return
 
   event.preventDefault()
+
+  if (!event.ctrlKey) {
+    const lineHeight = 16
+    const pageHeight = boardRef.value.getBoundingClientRect().height || 240
+    const multiplier = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? lineHeight
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+        ? pageHeight
+        : 1
+    const nextX = pan.value.x - event.deltaX * multiplier
+    const nextY = pan.value.y - event.deltaY * multiplier
+    if (nextX !== pan.value.x || nextY !== pan.value.y) {
+      pan.value.x = nextX
+      pan.value.y = nextY
+      scheduleStateSave()
+    }
+    return
+  }
 
   const boardRect = boardRef.value.getBoundingClientRect()
   const cursorBoardX = event.clientX - boardRect.left
@@ -1393,25 +1561,13 @@ const closePinnedTooltip = () => {
 }
 
 const openAddModal = () => {
-  if (props.floatingMode) {
-    windowManager.openChildWindow(
-      graphParentWindowId.value,
-      'canvas-add-item',
-      'Add Node',
-      {
-        initialTab: 'devices',
-        onSelectTemplate: (item: NodeTemplate) => {
-          void addNodeFromTemplate(item)
-        },
-      },
-      { id: `canvas-add-item:${graphParentWindowId.value}` },
-    )
-    return
-  }
   showAddModal.value = true
   catalogTab.value = 'devices'
   addSearchQuery.value = ''
   connectedNoticeNodeId.value = null
+  requestAnimationFrame(() => {
+    clampPanelsToBoard()
+  })
 }
 
 const hasNodeForDeviceId = (deviceId: number) => {
@@ -1503,13 +1659,13 @@ const getViewportCenterWorld = () => {
   }
 }
 
-const addNodeFromTemplate = async (item: NodeTemplate, options?: { closeModal?: boolean }) => {
+const addNodeFromTemplate = async (
+  item: NodeTemplate,
+  options?: { closeModal?: boolean },
+) => {
   const center = getViewportCenterWorld()
-  const maxX = WORLD_WIDTH - NODE_WIDTH - BOARD_PADDING
-  const maxY = WORLD_HEIGHT - NODE_HEIGHT - BOARD_PADDING
+  const placement = normalizeWorldNodePlacement(center.x - NODE_WIDTH * 0.5, center.y - NODE_HEIGHT * 0.5)
 
-  const x = snapToGrid(clamp(center.x - NODE_WIDTH * 0.5, BOARD_PADDING, maxX))
-  const y = snapToGrid(clamp(center.y - NODE_HEIGHT * 0.5, BOARD_PADDING, maxY))
   const id = `${item.kind}-${Date.now()}-${Math.floor(Math.random() * 1000)}`
   const createdNode: CanvasNode = {
     id,
@@ -1519,18 +1675,22 @@ const addNodeFromTemplate = async (item: NodeTemplate, options?: { closeModal?: 
     kind: item.kind,
     details: [...item.details],
     ports: item.ports.map((port) => ({ ...port })),
-    x,
-    y,
+    x: placement.x,
+    y: placement.y,
   }
 
   nodes.value.push(createdNode)
 
   selectSingleNode(id)
-  if (!props.floatingMode && (options?.closeModal ?? true)) {
+  if (options?.closeModal ?? false) {
     closeAddModal()
   }
   scheduleStateSave()
   await lookupExistingComponentForNode(createdNode)
+}
+
+const onAddCatalogRowClick = (item: NodeTemplate) => {
+  void addNodeFromTemplate(item, { closeModal: false })
 }
 
 const hydrateCanvas = async () => {
@@ -1598,8 +1758,18 @@ const cutHoveredCable = () => {
 }
 
 const onWindowKeyDown = (event: KeyboardEvent) => {
-  const activeTag = (document.activeElement as HTMLElement | null)?.tagName
-  if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return
+  const activeElement = document.activeElement as HTMLElement | null
+  const activeTag = activeElement?.tagName
+  const isEditingText = activeTag === 'INPUT' || activeTag === 'TEXTAREA' || !!activeElement?.isContentEditable
+
+  if (event.code === 'Space') {
+    if (isEditingText) return
+    isSpacePressed.value = true
+    event.preventDefault()
+    return
+  }
+
+  if (isEditingText) return
 
   if (event.key === 'Delete' || event.key === 'Backspace') {
     if (!hasSelectedNodes.value) return
@@ -1625,12 +1795,34 @@ const onWindowKeyDown = (event: KeyboardEvent) => {
   }
 }
 
+const onWindowKeyUp = (event: KeyboardEvent) => {
+  if (event.code === 'Space') {
+    isSpacePressed.value = false
+  }
+}
+
+const onWindowBlur = () => {
+  isSpacePressed.value = false
+  panelDrag.value = null
+}
+
+const onWindowResize = () => {
+  clampPanelsToBoard()
+}
+
 window.addEventListener('pointermove', onPointerMove)
 window.addEventListener('pointerup', onPointerUp)
 window.addEventListener('keydown', onWindowKeyDown)
+window.addEventListener('keyup', onWindowKeyUp)
+window.addEventListener('blur', onWindowBlur)
+window.addEventListener('resize', onWindowResize)
 
 onMounted(() => {
   void hydrateCanvas()
+  requestAnimationFrame(() => {
+    initializePanelPositions()
+    clampPanelsToBoard()
+  })
 })
 
 onBeforeUnmount(() => {
@@ -1641,51 +1833,14 @@ onBeforeUnmount(() => {
   window.removeEventListener('pointermove', onPointerMove)
   window.removeEventListener('pointerup', onPointerUp)
   window.removeEventListener('keydown', onWindowKeyDown)
+  window.removeEventListener('keyup', onWindowKeyUp)
+  window.removeEventListener('blur', onWindowBlur)
+  window.removeEventListener('resize', onWindowResize)
 })
 </script>
 
 <template>
   <section class="node-view" :class="{ 'floating-mode': props.floatingMode }">
-    <header class="node-toolbar">
-      <div class="node-toolbar-copy">
-        <p>Ctrl/Cmd+click to multi-select nodes. Middle-click drag pans. Click a port in node popup to start cable routing.</p>
-      </div>
-      <div class="persistence-status" :class="{ error: !!persistence.error.value, readonly: persistence.readOnly.value }">
-        <span>{{ persistenceStatusLabel }}</span>
-        <button v-if="persistence.error.value" class="ghost-btn" @click="persistence.retry">Retry</button>
-        <button v-if="!persistence.readOnly.value" class="ghost-btn" @click="saveStateNow">Save now</button>
-      </div>
-      <div class="toolbar-actions">
-        <div class="intent-tools">
-          <input
-            v-model="intentPrompt"
-            class="intent-input"
-            placeholder="Describe your routing intent..."
-            @keydown.enter.prevent="void runIntentDeviceMatch()"
-          />
-          <button class="ghost-btn" :disabled="intentMatchLoading || !intentPrompt.trim()" @click="void runIntentDeviceMatch()">
-            {{ intentMatchLoading ? 'Matching...' : 'Match devices' }}
-          </button>
-        </div>
-        <div class="zoom-controls">
-          <button class="ghost-btn" @click="zoomOut">-</button>
-          <span class="zoom-label">{{ zoomPercent }}</span>
-          <button class="ghost-btn" @click="zoomIn">+</button>
-          <button class="ghost-btn" @click="resetView">Reset view</button>
-        </div>
-        <button class="ghost-btn apply-btn" :disabled="persistence.readOnly.value || isApplyingConnections" @click="applyCanvasToWiring">
-          {{ isApplyingConnections ? 'Applying...' : 'Apply to wiring' }}
-        </button>
-        <button class="ghost-btn" :disabled="isRefreshingConnections" @click="void refreshCanvasConnections()">
-          {{ isRefreshingConnections ? 'Refreshing...' : 'Refresh live wiring' }}
-        </button>
-        <button class="ghost-btn add-btn" @click="openAddModal">+ Add node</button>
-        <button class="ghost-btn danger-btn" :disabled="!hasSelectedNodes" @click="deleteSelectedNodes">
-          Delete selected
-        </button>
-      </div>
-    </header>
-
     <div v-if="cableDraft && draftSourceLabel" class="connect-banner">
       <span>Connecting from {{ draftSourceLabel }}. Click a destination node.</span>
       <button class="ghost-btn" @click="cancelCableDraft">Cancel</button>
@@ -1724,10 +1879,178 @@ onBeforeUnmount(() => {
     <div
       ref="boardRef"
       class="board"
-      :class="{ panning: !!panning, wiring: !!cableDraft, selecting: !!selectionBox }"
+      :class="{
+        panning: !!panning,
+        wiring: !!cableDraft,
+        selecting: !!selectionBox,
+        'space-pan-ready': isSpacePressed,
+      }"
       @pointerdown="onBoardPointerDown"
       @wheel="onBoardWheel"
     >
+      <div
+        ref="toolsPanelRef"
+        class="canvas-overlay canvas-tools-panel"
+        :class="{ minimized: toolsPanel.minimized }"
+        :style="{ left: `${toolsPanel.x}px`, top: `${toolsPanel.y}px` }"
+        @pointerdown.stop
+      >
+        <header class="canvas-panel-header" @pointerdown="startPanelDrag('tools', $event)">
+          <strong>Canvas Tools</strong>
+          <div class="canvas-panel-actions">
+            <button
+              class="tooltip-close panel-action-btn"
+              type="button"
+              :title="toolsPanel.minimized ? 'Restore tools panel' : 'Minimize tools panel'"
+              @click="toolsPanel.minimized = !toolsPanel.minimized"
+            >
+              {{ toolsPanel.minimized ? '+' : '-' }}
+            </button>
+          </div>
+        </header>
+        <div v-if="!toolsPanel.minimized" class="canvas-panel-body">
+          <p class="canvas-help">Pan: middle-click or Space+drag. Zoom: Ctrl+scroll.</p>
+          <div class="persistence-status" :class="{ error: !!persistence.error.value, readonly: persistence.readOnly.value }">
+            <span>{{ persistenceStatusLabel }}</span>
+            <button v-if="persistence.error.value" class="ghost-btn tool-btn compact" title="Retry save" @click="persistence.retry">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.34-5.66L4 9h6V3L7.75 5.25A10 10 0 1 1 2 12h2z"/></svg>
+              <span>Retry</span>
+            </button>
+            <button v-if="!persistence.readOnly.value" class="ghost-btn tool-btn compact" title="Save now" @click="saveStateNow">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17 3H5a2 2 0 0 0-2 2v14h18V7l-4-4zm-5 14a3 3 0 1 1 0-6 3 3 0 0 1 0 6zm3-10H5V5h10v2z"/></svg>
+              <span>Save</span>
+            </button>
+          </div>
+          <div class="tools-grid">
+            <div class="zoom-controls">
+              <button class="ghost-btn tool-btn" title="Zoom out" @click="zoomOut">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 11h14v2H5z"/></svg>
+                <span>Zoom out</span>
+              </button>
+              <span class="zoom-label">{{ zoomPercent }}</span>
+              <button class="ghost-btn tool-btn" title="Zoom in" @click="zoomIn">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
+                <span>Zoom in</span>
+              </button>
+              <button class="ghost-btn tool-btn" title="Reset view" @click="resetView">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5a7 7 0 1 0 6.71 9h2.06A9 9 0 1 1 12 3v2zm1-2v6h6V7h-2.59A8.96 8.96 0 0 0 13 3z"/></svg>
+                <span>Reset</span>
+              </button>
+            </div>
+            <button class="ghost-btn tool-btn apply-btn" :disabled="persistence.readOnly.value || isApplyingConnections" @click="applyCanvasToWiring">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 16.17-3.88-3.88L3.7 13.7 9 19l12-12-1.41-1.41z"/></svg>
+              <span>{{ isApplyingConnections ? 'Applying...' : 'Apply to wiring' }}</span>
+            </button>
+            <button class="ghost-btn tool-btn" :disabled="isRefreshingConnections" @click="void refreshCanvasConnections()">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 6V3L8 7l4 4V8a4 4 0 1 1-4 4H6a6 6 0 1 0 6-6zm6 6a6 6 0 0 1-6 6v3l4-4-4-4v3a4 4 0 1 0 4-4h2z"/></svg>
+              <span>{{ isRefreshingConnections ? 'Refreshing...' : 'Refresh live wiring' }}</span>
+            </button>
+            <button class="ghost-btn tool-btn add-btn" @click="openAddModal">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v14h-2zM5 11h14v2H5z"/></svg>
+              <span>Add node</span>
+            </button>
+            <button class="ghost-btn tool-btn danger-btn" :disabled="!hasSelectedNodes" @click="deleteSelectedNodes">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 21a2 2 0 0 1-2-2V7h14v12a2 2 0 0 1-2 2H7zm3-10v7h2v-7h-2zm4 0v7h2v-7h-2zM9 4h6l1 2h4v2H4V6h4l1-2z"/></svg>
+              <span>Delete selected</span>
+            </button>
+            <button
+              class="ghost-btn tool-btn panel-toggle-btn"
+              :aria-pressed="showIntentPanel"
+              :title="showIntentPanel ? 'Hide intent panel' : 'Show intent panel'"
+              @click="showIntentPanel = !showIntentPanel"
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v4H4V4zm0 6h16v10H4V10zm2 2v6h12v-6H6z"/></svg>
+              <span>{{ showIntentPanel ? 'Hide intent' : 'Show intent' }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="showIntentPanel"
+        ref="intentPanelRef"
+        class="canvas-overlay canvas-intent-panel"
+        :style="{ left: `${intentPanel.x}px`, top: `${intentPanel.y}px` }"
+        @pointerdown.stop
+      >
+        <header class="canvas-panel-header" @pointerdown="startPanelDrag('intent', $event)">
+          <strong>Intent Match</strong>
+          <div class="canvas-panel-actions">
+            <button class="tooltip-close panel-action-btn" title="Close intent panel" @click="showIntentPanel = false">x</button>
+          </div>
+        </header>
+        <div class="canvas-panel-body">
+          <input
+            v-model="intentPrompt"
+            class="intent-input"
+            placeholder="Describe your routing intent..."
+            @keydown.enter.prevent="void runIntentDeviceMatch()"
+          />
+          <button class="ghost-btn tool-btn" :disabled="intentMatchLoading || !intentPrompt.trim()" @click="void runIntentDeviceMatch()">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 18-6-6 1.41-1.41L10 15.17l8.59-8.58L20 8l-10 10z"/></svg>
+            <span>{{ intentMatchLoading ? 'Matching...' : 'Match devices' }}</span>
+          </button>
+        </div>
+      </div>
+
+      <div
+        v-if="showAddModal"
+        ref="addPanelRef"
+        class="canvas-overlay canvas-add-panel"
+        :style="{ left: `${addPanel.x}px`, top: `${addPanel.y}px` }"
+        @pointerdown.stop
+      >
+        <header class="canvas-panel-header" @pointerdown="startPanelDrag('add', $event)">
+          <strong>Add Node</strong>
+          <div class="canvas-panel-actions">
+            <button class="tooltip-close panel-action-btn" title="Close add panel" @click="closeAddModal">x</button>
+          </div>
+        </header>
+        <div class="canvas-panel-body add-panel-body">
+          <div class="catalog-tabs">
+            <button class="ghost-btn" :class="{ active: catalogTab === 'devices' }" @click="catalogTab = 'devices'">
+              Devices
+            </button>
+            <button class="ghost-btn" :class="{ active: catalogTab === 'patchbay' }" @click="catalogTab = 'patchbay'">
+              Patchbay Ports
+            </button>
+          </div>
+          <input
+            v-model="addSearchQuery"
+            class="add-search"
+            :placeholder="catalogTab === 'devices' ? 'Search devices...' : 'Search patchbay ports...'"
+          />
+          <p class="add-panel-help">Drag a row into the canvas to place it, or click to add at center.</p>
+
+          <div class="add-node-table" role="listbox" aria-label="Add node catalog">
+            <div class="add-node-header" :class="{ patchbay: catalogTab === 'patchbay' }">
+              <span>Name</span>
+              <span>Type</span>
+              <span v-if="catalogTab === 'devices'">Ports</span>
+              <span v-else>Details</span>
+            </div>
+            <button
+              v-for="item in filteredCatalog"
+              :key="item.templateId"
+              class="add-node-row"
+              :class="{ patchbay: item.kind === 'patchbay' }"
+              type="button"
+              @click="onAddCatalogRowClick(item)"
+            >
+              <span class="cell-name">{{ item.title }}</span>
+              <span class="cell-type">{{ item.kind === 'patchbay' ? item.details[1]?.replace('Type: ', '') || 'Patchbay' : item.details[0]?.replace('Type: ', '') || 'Device' }}</span>
+              <span v-if="item.kind === 'device'" class="cell-ports">{{ item.ports.length }}</span>
+              <span v-else class="cell-details">
+                <span v-if="item.patchbayMeta?.tag" class="meta-chip">{{ item.patchbayMeta.tag }}</span>
+                <span v-if="patchbayLocationLabel(item)" class="meta-chip">{{ patchbayLocationLabel(item) }}</span>
+                <span v-if="!item.patchbayMeta?.tag && !patchbayLocationLabel(item)" class="text-muted">No extra details</span>
+              </span>
+            </button>
+            <p v-if="filteredCatalog.length === 0" class="catalog-empty">No items found.</p>
+          </div>
+        </div>
+      </div>
+
       <div class="world" :style="worldStyle">
         <svg class="wires" :viewBox="`0 0 ${WORLD_WIDTH} ${WORLD_HEIGHT}`" aria-hidden="true">
           <g v-for="item in cableGeometry" :key="item.id">
@@ -1839,40 +2162,6 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div v-if="showAddModal && !props.floatingMode" class="modal-overlay" @click="closeAddModal">
-      <div class="add-modal" @click.stop>
-        <header class="add-modal-header">
-          <h3>Add Node</h3>
-          <button class="tooltip-close" @click="closeAddModal">x</button>
-        </header>
-        <div class="catalog-tabs">
-          <button class="ghost-btn" :class="{ active: catalogTab === 'devices' }" @click="catalogTab = 'devices'">
-            Devices
-          </button>
-          <button class="ghost-btn" :class="{ active: catalogTab === 'patchbay' }" @click="catalogTab = 'patchbay'">
-            Patchbay Ports
-          </button>
-        </div>
-        <input
-          v-model="addSearchQuery"
-          class="add-search"
-          placeholder="Search nodes..."
-        />
-        <div class="catalog-list">
-          <button
-            v-for="item in filteredCatalog"
-            :key="item.templateId"
-            class="catalog-item"
-            @click="void addNodeFromTemplate(item)"
-          >
-            <span class="catalog-item-title">{{ item.title }}</span>
-            <span class="catalog-item-subtitle">{{ item.subtitle }}</span>
-          </button>
-          <p v-if="filteredCatalog.length === 0" class="catalog-empty">No items found.</p>
-        </div>
-      </div>
-    </div>
-
     <div v-if="showConnectModal && activeConnectTargetNode && !props.floatingMode" class="modal-overlay" @click="closeConnectModal">
       <div class="connect-modal" @click.stop>
         <header class="add-modal-header">
@@ -1914,35 +2203,6 @@ onBeforeUnmount(() => {
   gap: var(--space-2);
 }
 
-.node-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-3);
-  background: rgba(31, 28, 24, 0.9);
-}
-
-.node-view.floating-mode .node-toolbar {
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  padding: var(--space-2) var(--space-1);
-}
-
-.node-toolbar-copy h2 {
-  margin: 0;
-  font-size: 1.2rem;
-}
-
-.node-toolbar-copy p {
-  margin: 2px 0 0;
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-}
-
 .persistence-status {
   display: inline-flex;
   align-items: center;
@@ -1964,31 +2224,7 @@ onBeforeUnmount(() => {
   color: #c8def3;
 }
 
-.toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.intent-tools {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.intent-input {
-  min-width: 320px;
-  max-width: 420px;
-  border: 1px solid var(--border-default);
-  border-radius: 10px;
-  background: rgba(31, 28, 24, 0.85);
-  color: var(--text-primary);
-  padding: 8px 10px;
-}
-
-.node-toolbar .ghost-btn {
+.ghost-btn {
   border: 1px solid rgba(191, 170, 131, 0.5);
   background: linear-gradient(180deg, rgba(52, 45, 35, 0.92), rgba(33, 29, 22, 0.92));
   color: #f0e5d2;
@@ -1998,14 +2234,122 @@ onBeforeUnmount(() => {
   transition: transform 0.14s ease, border-color 0.18s ease, background 0.18s ease;
 }
 
-.node-toolbar .ghost-btn:hover {
+.ghost-btn:hover {
   border-color: rgba(212, 154, 79, 0.8);
   background: linear-gradient(180deg, rgba(67, 56, 42, 0.94), rgba(40, 35, 26, 0.94));
   transform: translateY(-1px);
 }
 
-.node-toolbar .ghost-btn:active {
+.ghost-btn:active {
   transform: translateY(0);
+}
+
+.canvas-overlay {
+  position: absolute;
+  z-index: 14;
+  border: 1px solid rgba(191, 170, 131, 0.4);
+  border-radius: var(--radius-3);
+  background: rgba(18, 15, 11, 0.94);
+  box-shadow: var(--shadow-2);
+  overflow: hidden;
+}
+
+.canvas-tools-panel {
+  width: min(540px, calc(100% - 20px));
+}
+
+.canvas-tools-panel.minimized {
+  min-width: 190px;
+}
+
+.canvas-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(191, 170, 131, 0.3);
+  background: linear-gradient(180deg, rgba(50, 42, 31, 0.95), rgba(34, 29, 23, 0.95));
+  cursor: grab;
+  user-select: none;
+}
+
+.canvas-panel-header:active {
+  cursor: grabbing;
+}
+
+.canvas-panel-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.panel-action-btn {
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.canvas-panel-body {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.canvas-help {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+}
+
+.tools-grid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  font-size: 0.82rem;
+}
+
+.tool-btn.compact {
+  padding: 4px 8px;
+}
+
+.tool-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.canvas-intent-panel {
+  width: min(360px, calc(100% - 20px));
+}
+
+.canvas-add-panel {
+  width: min(540px, calc(100% - 20px));
+  z-index: 13;
+}
+
+.add-panel-body {
+  max-height: min(460px, calc(100vh - 220px));
+  overflow: auto;
+}
+
+.intent-input {
+  width: 100%;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: rgba(31, 28, 24, 0.85);
+  color: var(--text-primary);
+  padding: 8px 10px;
 }
 
 .zoom-controls {
@@ -2025,6 +2369,102 @@ onBeforeUnmount(() => {
 .add-btn {
   border-color: rgba(106, 163, 111, 0.7);
   color: #bfe0be;
+}
+
+.add-panel-help {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.add-node-table {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-2);
+  overflow: hidden;
+  background: rgba(10, 9, 7, 0.5);
+}
+
+.add-node-header,
+.add-node-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.8fr) minmax(100px, 1fr) 72px;
+  gap: 8px;
+  align-items: center;
+}
+
+.add-node-header.patchbay,
+.add-node-row.patchbay {
+  grid-template-columns: minmax(180px, 1.6fr) minmax(100px, 1fr) minmax(170px, 1.2fr);
+}
+
+.add-node-header {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-default);
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.add-node-row {
+  width: 100%;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 9px 10px;
+  text-align: left;
+  color: var(--text-primary);
+  background: transparent;
+  cursor: grab;
+}
+
+.add-node-row:last-of-type {
+  border-bottom: 0;
+}
+
+.add-node-row:hover {
+  background: rgba(106, 163, 111, 0.14);
+}
+
+.add-node-row:active {
+  cursor: grabbing;
+}
+
+.cell-name {
+  font-weight: 600;
+}
+
+.cell-type {
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.cell-ports {
+  justify-self: center;
+  font-weight: 700;
+  color: #c8def3;
+}
+
+.cell-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.meta-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(212, 154, 79, 0.45);
+  background: rgba(212, 154, 79, 0.12);
+  font-size: 0.7rem;
+  color: #f0e5d2;
+}
+
+.text-muted {
+  color: var(--text-muted);
+  font-size: 0.74rem;
 }
 
 .apply-btn {
@@ -2100,6 +2540,10 @@ onBeforeUnmount(() => {
   background: radial-gradient(circle at 0% 0%, rgba(106, 163, 111, 0.12), rgba(18, 16, 12, 0.96) 52%);
   cursor: default;
   touch-action: none;
+}
+
+.board.space-pan-ready {
+  cursor: grab;
 }
 
 .board.panning {
@@ -2412,7 +2856,6 @@ onBeforeUnmount(() => {
   z-index: 20;
 }
 
-.add-modal,
 .connect-modal {
   width: min(560px, calc(100vw - 32px));
   max-height: min(560px, calc(100vh - 32px));
@@ -2511,22 +2954,18 @@ onBeforeUnmount(() => {
 }
 
 @media (max-width: 960px) {
-  .node-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .toolbar-actions {
-    justify-content: flex-start;
-  }
-
-  .zoom-controls {
-    width: 100%;
-    justify-content: space-between;
+  .canvas-tools-panel,
+  .canvas-intent-panel,
+  .canvas-add-panel {
+    width: min(360px, calc(100% - 16px));
   }
 
   .node-tooltip {
     width: 250px;
+  }
+
+  .tool-btn span {
+    display: none;
   }
 }
 </style>

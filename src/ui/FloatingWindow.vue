@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, ref } from 'vue'
 import type { WindowRect, WindowState } from '@/stores/windowManager'
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   title: string
   rect: WindowRect
   state: WindowState
@@ -11,7 +11,9 @@ const props = defineProps<{
   showTitle?: boolean
   minWidth?: number
   minHeight?: number
-}>()
+}>(), {
+  showTitle: true,
+})
 
 const emit = defineEmits<{
   (e: 'focus'): void
@@ -25,7 +27,7 @@ const emit = defineEmits<{
 const minWidth = computed(() => props.minWidth ?? 300)
 const minHeight = computed(() => props.minHeight ?? 180)
 const variant = computed(() => props.variant ?? 'tool')
-const showTitle = computed(() => props.showTitle ?? true)
+const showTitle = computed(() => props.showTitle)
 
 const dragState = ref<null | {
   startX: number

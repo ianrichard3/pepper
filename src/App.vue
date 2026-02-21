@@ -567,9 +567,6 @@ onBeforeUnmount(() => {
                 <span class="status-dot"></span>
                 <span v-if="!isRailCollapsed">{{ statusLabel }}</span>
               </div>
-              <button class="ghost-btn" :title="t.app.export" :disabled="!canExport" @click="openTool('portability')">
-                <span>{{ isRailCollapsed ? 'EX' : t.app.export }}</span>
-              </button>
               <button class="ghost-btn" :title="t.app.help" @click="notifyComingSoon">
                 <span>{{ isRailCollapsed ? '?' : t.app.help }}</span>
               </button>
@@ -583,7 +580,6 @@ onBeforeUnmount(() => {
                 v-for="window in desktopWindows"
                 :key="window.id"
                 :title="window.title"
-                :show-title="false"
                 :rect="window.rect"
                 :state="window.state"
                 :z-index="window.zIndex"
@@ -690,7 +686,6 @@ onBeforeUnmount(() => {
                 @click="handleDockClick(window)"
               >
                 <span class="dock-title">{{ window.title }}</span>
-                <span class="dock-state">{{ window.state }}</span>
                 <span
                   class="dock-close"
                   role="button"
@@ -1036,12 +1031,6 @@ onBeforeUnmount(() => {
 .dock-title {
   color: var(--text-primary);
   font-weight: 600;
-}
-
-.dock-state {
-  text-transform: uppercase;
-  font-size: 0.68rem;
-  letter-spacing: 0.06em;
 }
 
 .dock-close {
