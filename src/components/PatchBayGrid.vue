@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import AdminSegmentedTabs from '@/components/admin/AdminSegmentedTabs.vue'
 import { store, type PatchBayNode } from '@/store'
 import { windowManager } from '@/stores/windowManager'
 import { strings } from '@/ui/strings'
@@ -66,6 +67,10 @@ const selectionBannerText = computed(() => {
 
 const columnLabels = computed(() => Array.from({ length: store.patchbayCols }, (_, index) => index + 1))
 const rowIndexes = computed(() => Array.from({ length: store.patchbayRows }, (_, index) => index))
+const patchbayViewTabs = computed(() => [
+  { id: 'panel', label: t.patchbay.viewPanel },
+  { id: 'list', label: t.patchbay.viewList },
+])
 
 const tagColorByName = computed(() => {
   const out: Record<string, string> = {}
@@ -639,6 +644,12 @@ const unlinkFromList = async (patchbayId: number) => {
   if (!link) return
   await store.unlinkPort(link.device.id, link.port.id)
 }
+
+const onPatchbayViewChange = (value: string) => {
+  if (value === 'panel' || value === 'list') {
+    switchView(value)
+  }
+}
 </script>
 
 <template>
@@ -656,14 +667,26 @@ const unlinkFromList = async (patchbayId: number) => {
 
       <div class="toolbar">
         <div class="view-picker">
-          <button :class="{ active: viewMode === 'panel' }" @click="switchView('panel')">{{ t.patchbay.viewPanel }}</button>
-          <button :class="{ active: viewMode === 'list' }" @click="switchView('list')">{{ t.patchbay.viewList }}</button>
+          <AdminSegmentedTabs
+            :items="patchbayViewTabs"
+            :model-value="viewMode"
+            size="sm"
+            @change="onPatchbayViewChange"
+          />
         </div>
 
         <div class="layout-controls">
-          <label>{{ t.patchbay.rows }} <input v-model.number="localRows" type="number" min="1" max="24" /></label>
-          <label>{{ t.patchbay.cols }} <input v-model.number="localCols" type="number" min="1" max="96" /></label>
-          <button :disabled="isSavingLayout" @click="saveLayout">{{ t.patchbay.saveLayout }}</button>
+          <div class="layout-capsule">
+            <label class="layout-field">
+              <span class="layout-label">{{ t.patchbay.rows }}</span>
+              <input v-model.number="localRows" type="number" min="1" max="24" />
+            </label>
+            <label class="layout-field">
+              <span class="layout-label">{{ t.patchbay.cols }}</span>
+              <input v-model.number="localCols" type="number" min="1" max="96" />
+            </label>
+            <button class="layout-save" :disabled="isSavingLayout" @click="saveLayout">{{ t.patchbay.saveLayout }}</button>
+          </div>
         </div>
 
         <input v-model="gridSearchQuery" :placeholder="t.patchbay.searchPlaceholder" class="grid-search-input" />
@@ -920,8 +943,10 @@ const unlinkFromList = async (patchbayId: number) => {
   align-items: center;
 }
 
-.view-picker button,
-.layout-controls button,
+.view-picker {
+  align-items: stretch;
+}
+
 .selection-banner button,
 .highlight-banner button {
   border: 1px solid var(--border-default);
@@ -932,12 +957,92 @@ const unlinkFromList = async (patchbayId: number) => {
   cursor: pointer;
 }
 
-.view-picker button.active {
-  background: rgba(61, 122, 88, 0.2);
+.layout-controls {
+  flex: 0 0 auto;
 }
 
-.layout-controls input {
-  width: 72px;
+.layout-capsule {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border-radius: calc(var(--radius-2) + 4px);
+  border: 1px solid color-mix(in oklab, var(--border-default) 86%, white 6%);
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--surface-2) 90%, white 2%), color-mix(in oklab, var(--surface-2) 96%, black 2%));
+  box-shadow:
+    inset 0 1px 0 color-mix(in oklab, white 10%, transparent),
+    inset 0 -1px 0 color-mix(in oklab, black 10%, transparent);
+}
+
+.layout-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-2);
+  background: color-mix(in oklab, var(--surface-1) 60%, transparent);
+  border: 1px solid color-mix(in oklab, var(--border-default) 70%, transparent);
+}
+
+.layout-label {
+  font-size: 0.73rem;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.layout-field input {
+  width: 58px;
+  min-width: 0;
+  border: 1px solid color-mix(in oklab, var(--border-default) 84%, white 6%);
+  background: color-mix(in oklab, var(--surface-1) 92%, white 2%);
+  color: var(--text-primary);
+  border-radius: 10px;
+  padding: 6px 8px;
+  font-size: 0.84rem;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.layout-field input:focus {
+  outline: none;
+  border-color: color-mix(in oklab, var(--accent) 58%, white 12%);
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 18%, transparent);
+}
+
+.layout-save,
+.selection-banner button,
+.highlight-banner button {
+  border: 1px solid var(--border-default);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  border-radius: var(--radius-2);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.layout-save {
+  border-radius: 999px;
+  padding: 7px 12px;
+  background:
+    linear-gradient(180deg, color-mix(in oklab, var(--accent) 90%, white 6%), color-mix(in oklab, var(--accent) 85%, black 8%));
+  border-color: color-mix(in oklab, var(--accent) 65%, black 5%);
+  color: #11130f;
+  font-weight: 700;
+  line-height: 1;
+  white-space: nowrap;
+  box-shadow:
+    0 5px 14px color-mix(in oklab, var(--accent) 14%, transparent),
+    inset 0 1px 0 color-mix(in oklab, white 22%, transparent);
+}
+
+.layout-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .grid-search-input {
@@ -948,6 +1053,13 @@ const unlinkFromList = async (patchbayId: number) => {
   background: var(--surface-2);
   color: var(--text-primary);
   padding: 8px 10px;
+}
+
+@media (max-width: 820px) {
+  .layout-capsule {
+    flex-wrap: wrap;
+    gap: 6px;
+  }
 }
 
 .panel-view {

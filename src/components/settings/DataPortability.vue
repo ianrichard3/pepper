@@ -4,6 +4,7 @@ import { store } from '@/store'
 import { windowManager } from '@/stores/windowManager'
 import { strings } from '@/ui/strings'
 import { buildDateStamp, downloadJsonFile } from '@/lib/download'
+import { useEntitlements } from '@/lib/useEntitlements'
 import { exportBundle, importApply, importPreview } from '@/services/portabilityApi'
 import type {
   ExportScope,
@@ -16,6 +17,7 @@ import type {
 
 const t = strings
 const OPTIONS_STORAGE_KEY = 'pepper.portability.options.v1'
+const { canExport, canImportPortability } = useEntitlements()
 
 const props = withDefaults(defineProps<{
   floatingMode?: boolean
@@ -291,6 +293,11 @@ function toggleSelectAllFiltered() {
 
 async function runExport() {
   exportForm.error = ''
+  if (!canExport.value) {
+    exportForm.error = 'Export is not enabled for this workspace.'
+    store.pushToast({ type: 'error', message: t.toast.entitlementRequired })
+    return
+  }
   if (exportForm.scope === 'SELECTED_DEVICES' && exportForm.selectedDeviceIds.length === 0) {
     exportForm.error = 'Select at least one device for selected-devices export.'
     return
@@ -399,6 +406,11 @@ async function parsePastedJson() {
 }
 
 async function runPreview() {
+  if (!canImportPortability.value) {
+    importError.value = 'Import preview is not enabled for this workspace.'
+    store.pushToast({ type: 'error', message: t.toast.entitlementRequired })
+    return
+  }
   if (!importParsedBundle.value) {
     importError.value = 'Select or paste a JSON bundle before previewing.'
     return
@@ -423,6 +435,11 @@ function continueToOptions() {
 
 async function executeApply() {
   if (!importParsedBundle.value) return
+  if (!canImportPortability.value) {
+    importError.value = 'Import is not enabled for this workspace.'
+    store.pushToast({ type: 'error', message: t.toast.entitlementRequired })
+    return
+  }
 
   importLoadingApply.value = true
   importError.value = ''

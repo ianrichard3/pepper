@@ -3,25 +3,29 @@ import { computed, reactive, ref } from 'vue'
 import { adminAccessStore, type EditableEntitlements } from '@/stores/adminAccess'
 import { featureKeys, limitKeys, type FeatureKey, type LimitKey } from '@/lib/entitlementKeys'
 import { store } from '@/store'
+import AdminFeatureBuckets from './AdminFeatureBuckets.vue'
 
 const props = withDefaults(defineProps<{ floatingMode?: boolean }>(), {
   floatingMode: false,
 })
 
 const selectedUserId = ref<string | null>(null)
+const memberQuery = ref('')
 const localOverride = reactive<EditableEntitlements>({
   enabled: true,
   plan: '',
-  features: {
-    ai_detection: false,
-    ai_intent: false,
-    export: false,
-    catalog: false,
-  },
+  features: Object.fromEntries(featureKeys.map((key) => [key, false])) as Record<FeatureKey, boolean>,
   limits: {},
 })
 
 const hasWorkspace = computed(() => adminAccessStore.workspaceId !== null)
+const filteredMembers = computed(() => {
+  const query = memberQuery.value.trim().toLowerCase()
+  if (!query) return adminAccessStore.members
+  return adminAccessStore.members.filter((member) =>
+    member.clerk_user_id.toLowerCase().includes(query) || String(member.email || '').toLowerCase().includes(query)
+  )
+})
 
 function resetLocalOverride() {
   localOverride.enabled = true
@@ -123,8 +127,9 @@ function setLimit(key: LimitKey, value: string) {
 
     <div class="members-grid">
       <div class="member-list">
+        <input v-model="memberQuery" class="member-search" type="text" placeholder="Search users..." />
         <button
-          v-for="member in adminAccessStore.members"
+          v-for="member in filteredMembers"
           :key="member.clerk_user_id"
           class="member-btn"
           :class="{ active: selectedUserId === member.clerk_user_id }"
@@ -140,11 +145,12 @@ function setLimit(key: LimitKey, value: string) {
         <p class="sub">User: {{ selectedUserId }}</p>
 
         <div class="field-group">
-          <h5 v-if="!props.floatingMode">Features</h5>
-          <label v-for="key in featureKeys" :key="key" class="field checkbox-row compact">
-            <input type="checkbox" :checked="localOverride.features[key]" @change="setFeature(key, ($event.target as HTMLInputElement).checked)" />
-            <span>{{ key }}</span>
-          </label>
+          <AdminFeatureBuckets
+            :keys="[...featureKeys]"
+            :model-value="localOverride.features"
+            title="Features"
+            @update:model-value="(next) => { for (const key of featureKeys) localOverride.features[key] = Boolean(next[key]) }"
+          />
         </div>
 
         <div class="field-group">
@@ -207,6 +213,17 @@ function setLimit(key: LimitKey, value: string) {
   gap: var(--space-2);
   max-height: 480px;
   overflow: auto;
+}
+
+.member-search {
+  background: var(--surface-1);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-2);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 
 .member-btn {

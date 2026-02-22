@@ -273,6 +273,11 @@ export interface AuthContextResponse {
   features?: Record<string, boolean>
   limits?: Record<string, number>
   usage?: Record<string, { feature_key: string; period: number; used: number; limit?: number | null }>
+  admin_access?: {
+    allowed: boolean
+    source: 'whitelist' | 'superadmin' | 'none' | string
+    reason?: string | null
+  } | null
   [key: string]: unknown
 }
 
@@ -320,6 +325,35 @@ export interface AdminWorkspaceMember {
   last_name?: string | null
   email?: string | null
   [key: string]: unknown
+}
+
+export interface AdminWorkspaceListItem {
+  workspace_id: number
+  org_id: string
+  name?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface AdminWorkspaceListResponse {
+  items: AdminWorkspaceListItem[]
+  total: number
+}
+
+export interface AdminWhitelistEntry {
+  id: number
+  clerk_user_id: string
+  note?: string | null
+  active: boolean
+  created_by_clerk_user_id?: string | null
+  updated_by_clerk_user_id?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export interface AdminWhitelistListResponse {
+  items: AdminWhitelistEntry[]
+  total: number
 }
 
 export interface ApiRecommendationRequest {
@@ -824,6 +858,45 @@ export const api = {
 
   async getWorkspaceMembersAdmin(workspaceId: number): Promise<AdminWorkspaceMember[]> {
     return requestJson<AdminWorkspaceMember[]>(`/admin/workspaces/${workspaceId}/members`)
+  },
+
+  async listAdminWorkspaces(params?: { q?: string; offset?: number; limit?: number }): Promise<AdminWorkspaceListResponse> {
+    const qs = new URLSearchParams()
+    if (params?.q) qs.set('q', params.q)
+    if (typeof params?.offset === 'number') qs.set('offset', String(params.offset))
+    if (typeof params?.limit === 'number') qs.set('limit', String(params.limit))
+    const suffix = qs.size ? `?${qs.toString()}` : ''
+    return requestJson<AdminWorkspaceListResponse>(`/admin/workspaces${suffix}`)
+  },
+
+  async listAdminWhitelist(params?: { q?: string; active?: boolean | null; offset?: number; limit?: number }): Promise<AdminWhitelistListResponse> {
+    const qs = new URLSearchParams()
+    if (params?.q) qs.set('q', params.q)
+    if (typeof params?.active === 'boolean') qs.set('active', String(params.active))
+    if (typeof params?.offset === 'number') qs.set('offset', String(params.offset))
+    if (typeof params?.limit === 'number') qs.set('limit', String(params.limit))
+    const suffix = qs.size ? `?${qs.toString()}` : ''
+    return requestJson<AdminWhitelistListResponse>(`/admin/access/whitelist${suffix}`)
+  },
+
+  async createAdminWhitelistEntry(payload: { clerk_user_id: string; note?: string | null }): Promise<AdminWhitelistEntry> {
+    return requestJson<AdminWhitelistEntry>('/admin/access/whitelist', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async updateAdminWhitelistEntry(entryId: number, payload: { note?: string | null; active?: boolean }): Promise<AdminWhitelistEntry> {
+    return requestJson<AdminWhitelistEntry>(`/admin/access/whitelist/${entryId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async deleteAdminWhitelistEntry(entryId: number): Promise<{ deleted: boolean }> {
+    return requestJson<{ deleted: boolean }>(`/admin/access/whitelist/${entryId}`, {
+      method: 'DELETE',
+    })
   },
 
   async getUserOverride(workspaceId: number, clerkUserId: string): Promise<AdminUserOverrideResponse> {

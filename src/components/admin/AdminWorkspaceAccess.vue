@@ -3,6 +3,7 @@ import { computed, reactive, ref, watch } from 'vue'
 import { adminAccessStore } from '@/stores/adminAccess'
 import { featureKeys, limitKeys, type LimitKey } from '@/lib/entitlementKeys'
 import { store } from '@/store'
+import AdminFeatureBuckets from './AdminFeatureBuckets.vue'
 
 const props = withDefaults(defineProps<{ floatingMode?: boolean }>(), {
   floatingMode: false,
@@ -10,10 +11,9 @@ const props = withDefaults(defineProps<{ floatingMode?: boolean }>(), {
 
 const allowlistedDraft = ref(false)
 const allowlistReason = ref('')
-const limitDrafts = reactive<Record<LimitKey, string>>({
-  ai_detection_per_month: '',
-  ai_intent_per_month: '',
-})
+const limitDrafts = reactive(
+  Object.fromEntries(limitKeys.map((key) => [key, ''])) as Record<LimitKey, string>
+)
 
 watch(
   () => adminAccessStore.allowlisted,
@@ -116,24 +116,20 @@ async function saveWorkspaceAccess() {
 
     <label class="field">
       <span>Plan</span>
-      <input
-        type="text"
-        :value="adminAccessStore.workspaceEntitlementsStored!.plan"
-        @input="adminAccessStore.workspaceEntitlementsStored!.plan = ($event.target as HTMLInputElement).value"
-        placeholder="pro"
-      />
+      <select v-model="adminAccessStore.workspaceEntitlementsStored!.plan">
+        <option value="free">free</option>
+        <option value="plus">plus</option>
+        <option value="pro">pro</option>
+      </select>
     </label>
 
     <div class="field-group">
-      <h4 v-if="!props.floatingMode">Features</h4>
-      <label v-for="key in featureKeys" :key="key" class="field checkbox-row compact">
-        <input
-          type="checkbox"
-          :checked="adminAccessStore.workspaceEntitlementsStored!.features[key]"
-          @change="adminAccessStore.workspaceEntitlementsStored!.features[key] = ($event.target as HTMLInputElement).checked"
-        />
-        <span>{{ key }}</span>
-      </label>
+      <AdminFeatureBuckets
+        :keys="[...featureKeys]"
+        :model-value="adminAccessStore.workspaceEntitlementsStored!.features"
+        title="Features"
+        @update:model-value="adminAccessStore.workspaceEntitlementsStored!.features = $event"
+      />
     </div>
 
     <div class="field-group">
@@ -180,7 +176,8 @@ async function saveWorkspaceAccess() {
   margin-bottom: var(--space-3);
 }
 
-.field input {
+.field input,
+.field select {
   background: var(--surface-1);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-2);

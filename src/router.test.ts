@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ref } from 'vue'
 
-const roleRef = ref<string | null>('org:member')
+const authContextRef = ref<any>({ admin_access: { allowed: false, source: 'none' } })
 const loadAuthContext = vi.fn(() => Promise.resolve({}))
 
 vi.mock('@/App.vue', () => ({
@@ -13,7 +13,7 @@ vi.mock('@/App.vue', () => ({
 vi.mock('@/lib/authz', () => ({
   loadAuthContext,
   useAuthz: () => ({
-    role: roleRef,
+    authContext: authContextRef,
   }),
 }))
 
@@ -21,13 +21,13 @@ const { resolveAdminGuard } = await import('@/router')
 
 describe('admin route guard', () => {
   beforeEach(() => {
-    roleRef.value = 'org:member'
+    authContextRef.value = { admin_access: { allowed: false, source: 'none' } }
     loadAuthContext.mockClear()
     loadAuthContext.mockResolvedValue({})
   })
 
-  it('allows org admin', async () => {
-    roleRef.value = 'org:admin'
+  it('allows whitelisted admin user', async () => {
+    authContextRef.value = { admin_access: { allowed: true, source: 'whitelist' } }
 
     const result = await resolveAdminGuard(true)
 
@@ -35,8 +35,8 @@ describe('admin route guard', () => {
     expect(result).toBe(true)
   })
 
-  it('redirects org member', async () => {
-    roleRef.value = 'org:member'
+  it('redirects non-whitelisted user', async () => {
+    authContextRef.value = { admin_access: { allowed: false, source: 'none' } }
 
     const result = await resolveAdminGuard(true)
 

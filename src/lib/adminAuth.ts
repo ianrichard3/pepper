@@ -1,3 +1,3 @@
-export function isAdminRole(role: string | null | undefined): boolean {
-  return role === 'org:admin' || role === 'superadmin'
+export function canAccessAdminPanel(authContext: { admin_access?: { allowed?: boolean | null } | null } | null | undefined): boolean {
+  return authContext?.admin_access?.allowed === true
 }

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useNodeCanvasPersistence } from '@/composables/useNodeCanvasPersistence'
 import { api, type ApiDeviceMatchResponse, type ApiIntent, type NodeCanvasConnectionsLookupStatus } from '@/lib/api'
+import { useEntitlements } from '@/lib/useEntitlements'
 import { windowManager } from '@/stores/windowManager'
 import {
   fromPersistedState,
@@ -102,6 +103,7 @@ const toolsPanelRef = ref<HTMLElement | null>(null)
 const intentPanelRef = ref<HTMLElement | null>(null)
 const addPanelRef = ref<HTMLElement | null>(null)
 const persistence = useNodeCanvasPersistence({ debounceMs: 600 })
+const { canRunIntentDeviceMatch } = useEntitlements()
 const hasMovedNodeDuringDrag = ref(false)
 const hasPannedDuringGesture = ref(false)
 const nodes = ref<CanvasNode[]>(
@@ -1620,6 +1622,11 @@ const openIntentMatchesWindow = (intent: ApiIntent, matchResponse: ApiDeviceMatc
 const runIntentDeviceMatch = async () => {
   const prompt = intentPrompt.value.trim()
   if (!prompt || intentMatchLoading.value) return
+  if (!canRunIntentDeviceMatch.value) {
+    intentMatchError.value = 'This workspace plan does not allow device intent matching.'
+    store.pushToast({ type: 'error', message: 'Tu plan no incluye esta función.' })
+    return
+  }
 
   intentMatchError.value = null
   intentMatchLoading.value = true
@@ -1986,7 +1993,7 @@ onBeforeUnmount(() => {
             placeholder="Describe your routing intent..."
             @keydown.enter.prevent="void runIntentDeviceMatch()"
           />
-          <button class="ghost-btn tool-btn" :disabled="intentMatchLoading || !intentPrompt.trim()" @click="void runIntentDeviceMatch()">
+          <button class="ghost-btn tool-btn" :disabled="intentMatchLoading || !intentPrompt.trim() || !canRunIntentDeviceMatch" @click="void runIntentDeviceMatch()">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m10 18-6-6 1.41-1.41L10 15.17l8.59-8.58L20 8l-10 10z"/></svg>
             <span>{{ intentMatchLoading ? 'Matching...' : 'Match devices' }}</span>
           </button>

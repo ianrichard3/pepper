@@ -53,6 +53,7 @@ async function loadUsage() {
         <select v-model="feature">
           <option value="ai_detection">ai_detection</option>
           <option value="ai_intent">ai_intent</option>
+          <option value="ai_intent_device_match">ai_intent_device_match</option>
         </select>
       </label>
 

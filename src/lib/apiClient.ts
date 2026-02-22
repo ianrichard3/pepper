@@ -118,6 +118,11 @@ function createApiErrorFromResponse(
     }
     return buildApiError('QUOTA_EXCEEDED', response.status, requestId)
   }
+  if (response.status === 409) {
+    if (isLimitError(errorJson, errorText)) {
+      return buildApiError('LIMIT_REACHED', response.status, requestId)
+    }
+  }
   if (response.status === 502 || response.status === 504) {
     return buildApiError('UPSTREAM_UNAVAILABLE', response.status, requestId)
   }

@@ -1,6 +1,8 @@
 import { reactive } from 'vue'
 import { api } from '@/lib/api'
+import { useAuthz } from '@/lib/authz'
 import { store } from '@/store'
+import type { FeatureKey } from '@/lib/entitlementKeys'
 import type {
   CanvasEdge,
   CanvasEndpoint,
@@ -38,6 +40,14 @@ function buildConflictMessage(err: any): string {
     return 'Permission error while updating connection.'
   }
   return detail || 'Connection update failed.'
+}
+
+function hasFeatureAccess(featureKey: FeatureKey): boolean {
+  const { authContext, authContextError, hasFeature } = useAuthz()
+  if (authContextError.value === 'AUTH_CONTEXT_UNSUPPORTED') return true
+  if (authContextError.value) return false
+  if (!authContext.value) return true
+  return hasFeature(featureKey, false)
 }
 
 export const canvasStore = reactive({
@@ -161,6 +171,13 @@ export const canvasStore = reactive({
     }
 
     this.error = null
+    if (!hasFeatureAccess('routing_edit')) {
+      this.error = 'Permission error while updating connection.'
+      if (!store.handleApiError(new Error('ENTITLEMENT_REQUIRED'), 'Connection update failed.')) {
+        store.pushToast({ type: 'error', message: this.error })
+      }
+      return false
+    }
     try {
       const created = await api.createConnection({ a, b })
       const duplicate = this.edges.some((edge) => edge.id === created.id)
@@ -177,6 +194,13 @@ export const canvasStore = reactive({
 
   async disconnectEdge(edgeId: string): Promise<boolean> {
     this.error = null
+    if (!hasFeatureAccess('routing_edit')) {
+      this.error = 'Permission error while updating connection.'
+      if (!store.handleApiError(new Error('ENTITLEMENT_REQUIRED'), 'Connection update failed.')) {
+        store.pushToast({ type: 'error', message: this.error })
+      }
+      return false
+    }
     try {
       await api.deleteConnection(edgeId)
       this.edges = this.edges.filter((edge) => edge.id !== edgeId)

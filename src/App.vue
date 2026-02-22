@@ -30,7 +30,7 @@ import FloatingWindow from './ui/FloatingWindow.vue'
 import { strings } from './ui/strings'
 import { store } from './store'
 import logoUrl from './assets/el-riche-mark.svg'
-import { isAdminRole } from './lib/adminAuth'
+import { canAccessAdminPanel } from './lib/adminAuth'
 import type { ApiDeviceMatchItem, ApiIntent } from './lib/api'
 
 const t = strings
@@ -44,7 +44,6 @@ const {
   authContextLoaded,
   authContextLoading,
   authContextError,
-  role,
   loadAuthContext,
   resetAuthContext,
 } = useAuthz()
@@ -61,7 +60,7 @@ const orgLoaded = computed(() => !isSignedIn.value || isLoaded.value)
 const needsOrganization = computed(() => isSignedIn.value && (!orgId.value || store.orgRequired))
 const isAdminRoute = computed(() => route.path === '/admin/access')
 const isPortabilityRoute = computed(() => route.path === '/settings/portability')
-const canAccessAdmin = computed(() => isAdminRole(role.value))
+const canAccessAdmin = computed(() => canAccessAdminPanel(authContext.value))
 const desktopCanvasEnabled = computed(() => isDesktop.value)
 
 const statusLabel = computed(() => {

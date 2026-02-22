@@ -7,6 +7,8 @@ import {
   type ApiPort,
 } from '@/lib/api'
 import { deviceImageCache } from '@/lib/deviceImageCache'
+import { useAuthz } from '@/lib/authz'
+import type { FeatureKey } from '@/lib/entitlementKeys'
 import { strings } from '@/ui/strings'
 import type { CanvasEdge } from '@/types/graph'
 
@@ -94,6 +96,23 @@ interface DevicePatchbayLink {
 }
 
 type FloatingWindowKey = 'devices' | `device:${number}`
+
+function hasFeatureAccess(featureKey: FeatureKey): boolean {
+  const { authContext, authContextError, hasFeature } = useAuthz()
+  if (authContextError.value === 'AUTH_CONTEXT_UNSUPPORTED') return true
+  if (authContextError.value) return false
+  if (!authContext.value) return true
+  return hasFeature(featureKey, false)
+}
+
+function throwEntitlementRequired(): never {
+  throw new Error('ENTITLEMENT_REQUIRED')
+}
+
+function requireFeatureAccess(featureKey: FeatureKey) {
+  if (hasFeatureAccess(featureKey)) return
+  throwEntitlementRequired()
+}
 
 function toDevicePatchbayLink(edge: CanvasEdge): DevicePatchbayLink | null {
   const a = edge.a
@@ -421,6 +440,7 @@ export const store = reactive({
   },
 
   async replacePatchbayLink(portId: string, patchbayId: number): Promise<void> {
+    requireFeatureAccess('routing_edit')
     const existingForPort = this.findPatchbayLinkByPortId(portId)
     const existingForPatchbay = this.findPatchbayLinkByPatchbayId(patchbayId)
 
@@ -663,6 +683,7 @@ export const store = reactive({
     catalogSource?: DeviceCatalogSource | null
   }): Promise<Device> {
     try {
+      requireFeatureAccess('device_edit')
       const payload: Parameters<typeof api.createDevice>[0] = {
         name: device.name,
         type: device.type,
@@ -720,6 +741,7 @@ export const store = reactive({
     }
   ): Promise<Device> {
     try {
+      requireFeatureAccess('device_edit')
       const apiDevice = await api.updateDevice(id, {
         name: payload.name,
         type: payload.type,
@@ -760,6 +782,7 @@ export const store = reactive({
   
   async deleteDevice(id: number) {
     try {
+      requireFeatureAccess('device_edit')
       await api.deleteDevice(id)
       
       const index = this.devices.findIndex(d => d.id === id)
@@ -780,6 +803,7 @@ export const store = reactive({
 
   async uploadDeviceImage(deviceId: number, image: File): Promise<Device> {
     try {
+      requireFeatureAccess('device_edit')
       const apiDevice = await api.uploadDeviceImage(deviceId, image)
       const updatedDevice = apiDeviceToDevice(apiDevice)
       
@@ -833,6 +857,7 @@ export const store = reactive({
     defaultView?: PatchbayViewMode,
     panelTransform?: { zoom: number; panX: number; panY: number },
   ) {
+    requireFeatureAccess('patchbay_layout_edit')
     const nextView = defaultView ?? this.patchbayView
     const nextZoom = panelTransform?.zoom ?? this.patchbayPanelZoom
     const nextPanX = panelTransform?.panX ?? this.patchbayPanelPan.x
@@ -872,6 +897,7 @@ export const store = reactive({
   },
 
   async ensurePatchbayTag(name: string, color?: string): Promise<PatchbayTag | null> {
+    requireFeatureAccess('patchbay_edit')
     const normalized = name.trim()
     if (!normalized) return null
     const existing = this.getPatchbayTag(normalized)
@@ -893,6 +919,7 @@ export const store = reactive({
     col?: number | null
     tag?: string | null
   }): Promise<PatchBayNode> {
+    requireFeatureAccess('patchbay_edit')
     const normalizedTag = String(payload.tag || '').trim() || null
     if (normalizedTag) {
       await this.ensurePatchbayTag(normalizedTag)
@@ -920,6 +947,7 @@ export const store = reactive({
       tag: string | null
     }>
   ): Promise<PatchBayNode> {
+    requireFeatureAccess('patchbay_edit')
     const normalizedTag = typeof payload.tag === 'string' ? (payload.tag.trim() || null) : payload.tag
     if (typeof normalizedTag === 'string' && normalizedTag) {
       await this.ensurePatchbayTag(normalizedTag)
@@ -937,6 +965,7 @@ export const store = reactive({
   },
 
   async deletePatchbayPoint(id: number): Promise<{ deleted: boolean; blocked?: boolean; message?: string | null }> {
+    requireFeatureAccess('patchbay_edit')
     const result = await api.deletePatchbayPointAllowConflict(id)
     if (!result.ok && result.status === 409 && result.code === 'PATCHBAY_POINT_CONNECTED') {
       return { deleted: false, blocked: true, message: result.message || null }

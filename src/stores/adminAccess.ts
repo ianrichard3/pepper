@@ -1,5 +1,13 @@
 import { reactive } from 'vue'
-import { api, type AdminEntitlementsPayload, type AdminUsageResponse, type AdminWorkspaceEntitlementsResponse, type AdminWorkspaceMember } from '@/lib/api'
+import {
+  api,
+  type AdminEntitlementsPayload,
+  type AdminUsageResponse,
+  type AdminWhitelistEntry,
+  type AdminWorkspaceEntitlementsResponse,
+  type AdminWorkspaceListItem,
+  type AdminWorkspaceMember,
+} from '@/lib/api'
 import { featureKeys, limitKeys, type FeatureKey, type LimitKey } from '@/lib/entitlementKeys'
 import { loadAuthContext, useAuthz } from '@/lib/authz'
 import { quotaStore } from '@/stores/quota'
@@ -16,9 +24,12 @@ function usageCacheKey(feature: string, period: number): string {
 }
 
 function normalizeWorkspaceEntitlements(response: AdminWorkspaceEntitlementsResponse): EditableEntitlements {
+  const effectiveFeatures = ((response as any)?.effective?.features || {}) as Partial<Record<FeatureKey, boolean>>
   const features = {} as Record<FeatureKey, boolean>
   for (const key of featureKeys) {
-    features[key] = Boolean(response.features?.[key])
+    const storedValue = response.features?.[key]
+    const fallbackValue = effectiveFeatures[key]
+    features[key] = Boolean(storedValue ?? fallbackValue)
   }
 
   const limits: Partial<Record<LimitKey, number>> = {}
@@ -61,31 +72,50 @@ function normalizePayload(entitlements: EditableEntitlements): AdminEntitlements
 
 export const adminAccessStore = reactive({
   workspaceId: null as number | null,
+  workspaceSearchQuery: '',
+  workspaceList: [] as AdminWorkspaceListItem[],
+  workspaceListTotal: 0,
+  selectedWorkspaceSummary: null as AdminWorkspaceListItem | null,
   allowlisted: false,
   allowlistReason: '',
   workspaceEntitlementsStored: null as EditableEntitlements | null,
   members: [] as AdminWorkspaceMember[],
   memberOverrides: {} as Record<string, EditableEntitlements | null>,
   usageByKey: {} as Record<string, AdminUsageResponse>,
+  whitelistQuery: '',
+  whitelistShowInactive: false,
+  whitelistEntries: [] as AdminWhitelistEntry[],
+  whitelistTotal: 0,
   loading: {
+    workspaceList: false,
     workspace: false,
     saveWorkspace: false,
     allowlist: false,
     members: false,
     override: false,
     usage: false,
+    whitelistList: false,
+    whitelistSave: false,
+    whitelistDelete: false,
   },
   errors: {
+    workspaceList: null as string | null,
     workspace: null as string | null,
     saveWorkspace: null as string | null,
     allowlist: null as string | null,
     members: null as string | null,
     override: null as string | null,
     usage: null as string | null,
+    whitelist: null as string | null,
   },
 
   setWorkspaceId(workspaceId: number | null) {
     this.workspaceId = workspaceId
+    if (workspaceId === null) {
+      this.selectedWorkspaceSummary = null
+    } else if (!this.selectedWorkspaceSummary || this.selectedWorkspaceSummary.workspace_id !== workspaceId) {
+      this.selectedWorkspaceSummary = this.workspaceList.find((item) => item.workspace_id === workspaceId) || null
+    }
   },
 
   initializeWorkspaceFromAuthContext() {
@@ -105,11 +135,110 @@ export const adminAccessStore = reactive({
     this.memberOverrides = {}
     this.usageByKey = {}
     this.errors.workspace = null
+    this.errors.workspaceList = null
     this.errors.saveWorkspace = null
     this.errors.allowlist = null
     this.errors.members = null
     this.errors.override = null
     this.errors.usage = null
+  },
+
+  async loadWorkspaceList(options?: { q?: string }) {
+    this.loading.workspaceList = true
+    this.errors.workspaceList = null
+    try {
+      if (typeof options?.q === 'string') this.workspaceSearchQuery = options.q
+      const response = await api.listAdminWorkspaces({
+        q: this.workspaceSearchQuery.trim() || undefined,
+        limit: 100,
+      })
+      this.workspaceList = response.items || []
+      this.workspaceListTotal = Number(response.total || 0)
+      if (this.workspaceId && !this.selectedWorkspaceSummary) {
+        this.selectedWorkspaceSummary = this.workspaceList.find((item) => item.workspace_id === this.workspaceId) || null
+      }
+      return this.workspaceList
+    } catch (error: any) {
+      this.errors.workspaceList = error?.message || 'Failed to load workspaces'
+      throw error
+    } finally {
+      this.loading.workspaceList = false
+    }
+  },
+
+  async selectWorkspace(workspaceId: number) {
+    this.selectedWorkspaceSummary = this.workspaceList.find((item) => item.workspace_id === workspaceId) || this.selectedWorkspaceSummary
+    return this.loadWorkspace(workspaceId)
+  },
+
+  async loadWhitelist(options?: { q?: string; showInactive?: boolean }) {
+    this.loading.whitelistList = true
+    this.errors.whitelist = null
+    try {
+      if (typeof options?.q === 'string') this.whitelistQuery = options.q
+      if (typeof options?.showInactive === 'boolean') this.whitelistShowInactive = options.showInactive
+      const response = await api.listAdminWhitelist({
+        q: this.whitelistQuery.trim() || undefined,
+        active: this.whitelistShowInactive ? null : true,
+        limit: 100,
+      })
+      this.whitelistEntries = response.items || []
+      this.whitelistTotal = Number(response.total || 0)
+      return this.whitelistEntries
+    } catch (error: any) {
+      this.errors.whitelist = error?.message || 'Failed to load whitelist'
+      throw error
+    } finally {
+      this.loading.whitelistList = false
+    }
+  },
+
+  async createWhitelistEntry(payload: { clerk_user_id: string; note?: string | null }) {
+    this.loading.whitelistSave = true
+    this.errors.whitelist = null
+    try {
+      const row = await api.createAdminWhitelistEntry(payload)
+      await this.loadWhitelist()
+      await this.refreshCurrentAuthContext()
+      return row
+    } catch (error: any) {
+      this.errors.whitelist = error?.message || 'Failed to create whitelist entry'
+      throw error
+    } finally {
+      this.loading.whitelistSave = false
+    }
+  },
+
+  async updateWhitelistEntry(entryId: number, payload: { note?: string | null; active?: boolean }) {
+    this.loading.whitelistSave = true
+    this.errors.whitelist = null
+    try {
+      const row = await api.updateAdminWhitelistEntry(entryId, payload)
+      await this.loadWhitelist()
+      await this.refreshCurrentAuthContext()
+      return row
+    } catch (error: any) {
+      this.errors.whitelist = error?.message || 'Failed to update whitelist entry'
+      throw error
+    } finally {
+      this.loading.whitelistSave = false
+    }
+  },
+
+  async deleteWhitelistEntry(entryId: number) {
+    this.loading.whitelistDelete = true
+    this.errors.whitelist = null
+    try {
+      const response = await api.deleteAdminWhitelistEntry(entryId)
+      await this.loadWhitelist()
+      await this.refreshCurrentAuthContext()
+      return response
+    } catch (error: any) {
+      this.errors.whitelist = error?.message || 'Failed to delete whitelist entry'
+      throw error
+    } finally {
+      this.loading.whitelistDelete = false
+    }
   },
 
   async loadWorkspace(workspaceId: number) {

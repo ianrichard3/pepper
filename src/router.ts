@@ -1,7 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import App from '@/App.vue'
 import { loadAuthContext, useAuthz } from '@/lib/authz'
-import { isAdminRole } from '@/lib/adminAuth'
+import { canAccessAdminPanel } from '@/lib/adminAuth'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -35,8 +35,8 @@ export async function resolveAdminGuard(requiresAdmin: boolean) {
     return { name: 'home' }
   }
 
-  const { role } = useAuthz()
-  if (isAdminRole(role.value)) return true
+  const { authContext } = useAuthz()
+  if (canAccessAdminPanel(authContext.value)) return true
 
   return { name: 'home' }
 }
@@ -46,4 +46,4 @@ router.beforeEach(async (to) => {
 })
 
 export default router
-export { isAdminRole }
+export { canAccessAdminPanel }

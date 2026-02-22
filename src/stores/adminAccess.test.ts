@@ -28,6 +28,24 @@ vi.mock('@/stores/quota', () => ({
 
 const { adminAccessStore } = await import('@/stores/adminAccess')
 
+const allFeatures = (overrides: Record<string, boolean> = {}) => ({
+  ai_detection: false,
+  ai_intent: false,
+  ai_intent_device_match: false,
+  export: false,
+  catalog: false,
+  device_edit: false,
+  patchbay_edit: false,
+  patchbay_layout_edit: false,
+  routing_edit: false,
+  portability_import: false,
+  ...overrides,
+})
+
+const allLimits = (overrides: Record<string, number> = {}) => ({
+  ...overrides,
+})
+
 describe('adminAccessStore', () => {
   beforeEach(() => {
     adminAccessStore.workspaceId = null
@@ -59,7 +77,7 @@ describe('adminAccessStore', () => {
     adminAccessStore.memberOverrides.user_1 = {
       enabled: true,
       plan: '',
-      features: { ai_detection: true, ai_intent: false, export: false, catalog: false },
+      features: allFeatures({ ai_detection: true }),
       limits: {},
     }
 
@@ -76,8 +94,8 @@ describe('adminAccessStore', () => {
       allowlisted: false,
       enabled: true,
       plan: 'pro',
-      features: { ai_detection: true, ai_intent: true, export: true, catalog: true },
-      limits: { ai_detection_per_month: 100, ai_intent_per_month: 50 },
+      features: allFeatures({ ai_detection: true, ai_intent: true, export: true, catalog: true }),
+      limits: allLimits({ ai_detection_per_month: 100, ai_intent_per_month: 50 }),
     })
 
     api.updateWorkspaceEntitlementsAdmin.mockResolvedValue({
@@ -85,8 +103,8 @@ describe('adminAccessStore', () => {
       allowlisted: false,
       enabled: true,
       plan: 'pro',
-      features: { ai_detection: true, ai_intent: true, export: true, catalog: true },
-      limits: { ai_detection_per_month: 100, ai_intent_per_month: 50 },
+      features: allFeatures({ ai_detection: true, ai_intent: true, export: true, catalog: true }),
+      limits: allLimits({ ai_detection_per_month: 100, ai_intent_per_month: 50 }),
     })
 
     await adminAccessStore.loadWorkspace(10)
@@ -103,16 +121,16 @@ describe('adminAccessStore', () => {
       allowlisted: false,
       enabled: true,
       plan: 'pro',
-      features: { ai_detection: true, ai_intent: false, export: true, catalog: false },
-      limits: { ai_detection_per_month: 20, ai_intent_per_month: 10 },
+      features: allFeatures({ ai_detection: true, export: true }),
+      limits: allLimits({ ai_detection_per_month: 20, ai_intent_per_month: 10 }),
     })
     api.updateWorkspaceEntitlementsAdmin.mockResolvedValue({
       workspace_id: 3,
       allowlisted: false,
       enabled: true,
       plan: 'pro',
-      features: { ai_detection: true, ai_intent: false, export: true, catalog: false },
-      limits: { ai_detection_per_month: 20 },
+      features: allFeatures({ ai_detection: true, export: true }),
+      limits: allLimits({ ai_detection_per_month: 20 }),
     })
 
     await adminAccessStore.loadWorkspace(3)

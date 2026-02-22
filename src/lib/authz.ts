@@ -44,6 +44,8 @@ export async function loadAuthContext(options?: { force?: boolean }) {
 export function useAuthz() {
   const plan = computed(() => authContext.value?.plan ?? null)
   const role = computed(() => authContext.value?.role ?? null)
+  const adminAccess = computed(() => authContext.value?.admin_access ?? null)
+  const adminAccessAllowed = computed(() => authContext.value?.admin_access?.allowed === true)
   const orgId = computed(() => authContext.value?.org_id ?? null)
   const userId = computed(() => authContext.value?.user_id ?? null)
   const features = computed(() => authContext.value?.features ?? {})
@@ -66,6 +68,8 @@ export function useAuthz() {
     authContextError,
     plan,
     role,
+    adminAccess,
+    adminAccessAllowed,
     orgId,
     userId,
     features,
