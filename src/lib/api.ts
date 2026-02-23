@@ -278,6 +278,36 @@ export interface AuthContextResponse {
   [key: string]: unknown
 }
 
+export interface WorkspaceBillingStatusResponse {
+  workspace_id: number
+  billing_managed: boolean
+  plan_current: 'free' | 'plus' | 'pro'
+  subscription_status: string
+  cancel_at_period_end: boolean
+  current_period_end_at?: string | null
+  grace_ends_at?: string | null
+  target_plan?: 'plus' | 'pro' | null
+  currency: string
+  amount_minor?: number | null
+  provider: string
+  last_payment_status?: string | null
+  allowed_actions?: Record<string, boolean>
+}
+
+export interface BillingCheckoutRequest {
+  target_plan: 'plus' | 'pro'
+  success_url?: string
+  failure_url?: string
+  pending_url?: string
+}
+
+export interface BillingCheckoutResponse {
+  checkout_intent_id: string
+  provider: string
+  checkout_url: string
+  expires_at?: string | null
+}
+
 export interface AdminEntitlementsPayload {
   enabled?: boolean
   plan?: string | null
@@ -818,6 +848,31 @@ export const api = {
 
   async getAuthContext(): Promise<AuthContextResponse> {
     return requestJson<AuthContextResponse>('/me/entitlements')
+  },
+
+  async getWorkspaceBillingStatus(): Promise<WorkspaceBillingStatusResponse> {
+    return requestJson<WorkspaceBillingStatusResponse>('/billing/subscription')
+  },
+
+  async startWorkspaceCheckout(payload: BillingCheckoutRequest): Promise<BillingCheckoutResponse> {
+    return requestJson<BillingCheckoutResponse>('/billing/checkout', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  async cancelWorkspaceSubscription(): Promise<{ ok: boolean; status: string; cancel_at_period_end: boolean; current_period_end_at?: string | null }> {
+    return requestJson<{ ok: boolean; status: string; cancel_at_period_end: boolean; current_period_end_at?: string | null }>(
+      '/billing/subscription/cancel',
+      { method: 'POST' }
+    )
+  },
+
+  async resumeWorkspaceSubscription(): Promise<{ ok: boolean; status: string; cancel_at_period_end: boolean; current_period_end_at?: string | null }> {
+    return requestJson<{ ok: boolean; status: string; cancel_at_period_end: boolean; current_period_end_at?: string | null }>(
+      '/billing/subscription/resume',
+      { method: 'POST' }
+    )
   },
 
   async getWorkspaceEntitlementsAdmin(workspaceId: number): Promise<AdminWorkspaceEntitlementsResponse> {
