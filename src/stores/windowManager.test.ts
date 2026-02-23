@@ -65,6 +65,78 @@ describe('windowManager bounds', () => {
     expect(resized?.rect.y).toBe(750)
   })
 
+  it('clamps tool windows to tool-specific minimum sizes', () => {
+    const patchbay = windowManager.openTool('patchbay', 'Patchbay')
+    const graph = windowManager.openTool('graph', 'Graph')
+
+    windowManager.resizeWindow(patchbay.id, { x: 40, y: 24, width: 100, height: 100 })
+    windowManager.resizeWindow(graph.id, { x: 220, y: 86, width: 100, height: 100 })
+
+    const patchbayResized = windowManager.getWindow(patchbay.id)
+    const graphResized = windowManager.getWindow(graph.id)
+
+    expect(patchbayResized?.rect.width).toBe(760)
+    expect(patchbayResized?.rect.height).toBe(560)
+    expect(graphResized?.rect.width).toBe(860)
+    expect(graphResized?.rect.height).toBe(540)
+  })
+
+  it('clamps utility child windows using baseline and exception minimums', () => {
+    const parent = windowManager.openTool('graph', 'Routing Canvas')
+    const selectPort = windowManager.openChildWindow(parent.id, 'canvas-select-port', 'Select Port', {}, { id: 'test:select-port' })
+    const intentMatches = windowManager.openChildWindow(parent.id, 'canvas-intent-matches', 'Intent Matches', {}, { id: 'test:intent-matches' })
+
+    windowManager.resizeWindow(selectPort.id, { x: 0, y: 0, width: 100, height: 100 })
+    windowManager.resizeWindow(intentMatches.id, { x: 0, y: 0, width: 100, height: 100 })
+
+    const selectPortResized = windowManager.getWindow(selectPort.id)
+    const intentMatchesResized = windowManager.getWindow(intentMatches.id)
+
+    expect(selectPortResized?.rect.width).toBe(460)
+    expect(selectPortResized?.rect.height).toBe(320)
+    expect(intentMatchesResized?.rect.width).toBe(640)
+    expect(intentMatchesResized?.rect.height).toBe(420)
+  })
+
+  it('clamps confirm child windows to confirm minimum sizes', () => {
+    const parent = windowManager.openTool('devices', 'Devices')
+    const confirm = windowManager.openChildWindow(parent.id, 'devices-delete-confirm', 'Delete Device', {}, { id: 'test:delete-confirm' })
+
+    windowManager.resizeWindow(confirm.id, { x: 0, y: 0, width: 100, height: 100 })
+    const resized = windowManager.getWindow(confirm.id)
+
+    expect(resized?.rect.width).toBe(460)
+    expect(resized?.rect.height).toBe(260)
+  })
+
+  it('re-clamps hydrated windows using per-kind minimums', () => {
+    localStorage.setItem(
+      windowManager.storageKey,
+      JSON.stringify({
+        windows: [
+          {
+            id: 'tool:patchbay',
+            kind: 'patchbay',
+            title: 'Patchbay',
+            parentId: null,
+            state: 'normal',
+            rect: { x: 40, y: 24, width: 100, height: 100 },
+            previousRect: null,
+            payload: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+      }),
+    )
+
+    windowManager.hydrate()
+    const hydrated = windowManager.getWindow('tool:patchbay')
+
+    expect(hydrated?.rect.width).toBe(760)
+    expect(hydrated?.rect.height).toBe(560)
+  })
+
   it('keeps newly opened child window on top after same-tick parent focus', async () => {
     const parent = windowManager.openTool('graph', 'Routing Canvas')
     const child = windowManager.openChildWindow(

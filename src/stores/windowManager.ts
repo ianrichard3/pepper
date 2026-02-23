@@ -22,6 +22,11 @@ export interface WindowRect {
   height: number
 }
 
+export interface WindowMinSize {
+  width: number
+  height: number
+}
+
 export interface ManagedWindow {
   id: string
   kind: WindowKind
@@ -52,8 +57,7 @@ interface PersistedLayout {
 }
 
 const STORAGE_PREFIX = 'pepper.windowLayout.v2'
-const MIN_WIDTH = 300
-const MIN_HEIGHT = 180
+const DEFAULT_WINDOW_MIN_SIZE: WindowMinSize = { width: 300, height: 180 }
 const CANVAS_PADDING = 8
 const MINIMIZED_VISIBLE_HEIGHT = 42
 const HEADER_VISIBLE_HEIGHT = 42
@@ -84,13 +88,46 @@ const TOOL_DEFAULT_RECTS: Record<ToolWindowKind, WindowRect> = {
   admin: { x: 180, y: 40, width: 980, height: 700 },
 }
 
+const WINDOW_MIN_SIZES: Record<WindowKind, WindowMinSize> = {
+  patchbay: { width: 760, height: 560 },
+  devices: { width: 820, height: 560 },
+  graph: { width: 860, height: 540 },
+  portability: { width: 820, height: 560 },
+  admin: { width: 840, height: 560 },
+  'device-detail': { width: 520, height: 360 },
+  'devices-add-edit': { width: 760, height: 520 },
+  'patchbay-point-detail': { width: 460, height: 320 },
+  'patchbay-link-search': { width: 520, height: 360 },
+  'patchbay-overwrite-confirm': { width: 460, height: 260 },
+  'canvas-add-item': { width: 500, height: 340 },
+  'canvas-select-port': { width: 460, height: 320 },
+  'canvas-intent-matches': { width: 640, height: 420 },
+  'portability-replace-confirm': { width: 460, height: 260 },
+  'devices-delete-confirm': { width: 460, height: 260 },
+}
+
+export function getWindowMinSize(kind: WindowKind): WindowMinSize {
+  return WINDOW_MIN_SIZES[kind] || DEFAULT_WINDOW_MIN_SIZE
+}
+
 function cloneRect(rect: WindowRect): WindowRect {
   return { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
 }
 
-function clampSize(rect: WindowRect, viewportWidth: number, viewportHeight: number): WindowRect {
-  const width = Math.min(Math.max(rect.width, MIN_WIDTH), Math.max(MIN_WIDTH, viewportWidth - CANVAS_PADDING * 2))
-  const height = Math.min(Math.max(rect.height, MIN_HEIGHT), Math.max(MIN_HEIGHT, viewportHeight - CANVAS_PADDING * 2))
+function clampSize(
+  rect: WindowRect,
+  viewportWidth: number,
+  viewportHeight: number,
+  minSize: WindowMinSize = DEFAULT_WINDOW_MIN_SIZE,
+): WindowRect {
+  const width = Math.min(
+    Math.max(rect.width, minSize.width),
+    Math.max(minSize.width, viewportWidth - CANVAS_PADDING * 2),
+  )
+  const height = Math.min(
+    Math.max(rect.height, minSize.height),
+    Math.max(minSize.height, viewportHeight - CANVAS_PADDING * 2),
+  )
   return { ...rect, width, height }
 }
 
@@ -111,8 +148,14 @@ function clampPosition(rect: WindowRect, state: WindowState, viewportWidth: numb
   return { ...rect, x, y }
 }
 
-function clampRectForState(rect: WindowRect, state: WindowState, viewportWidth: number, viewportHeight: number): WindowRect {
-  const sized = clampSize(rect, viewportWidth, viewportHeight)
+function clampRectForState(
+  rect: WindowRect,
+  state: WindowState,
+  viewportWidth: number,
+  viewportHeight: number,
+  minSize: WindowMinSize = DEFAULT_WINDOW_MIN_SIZE,
+): WindowRect {
+  const sized = clampSize(rect, viewportWidth, viewportHeight, minSize)
   return clampPosition(sized, state, viewportWidth, viewportHeight)
 }
 
@@ -149,7 +192,13 @@ export const windowManager = reactive({
       if (window.state === 'maximized') return window
       return {
         ...window,
-        rect: clampRectForState(window.rect, window.state, this.viewport.width, this.viewport.height),
+        rect: clampRectForState(
+          window.rect,
+          window.state,
+          this.viewport.width,
+          this.viewport.height,
+          getWindowMinSize(window.kind),
+        ),
       }
     })
   },
@@ -179,7 +228,13 @@ export const windowManager = reactive({
       return existing
     }
 
-    const defaultRect = clampRectForState(TOOL_DEFAULT_RECTS[kind], 'normal', this.viewport.width, this.viewport.height)
+    const defaultRect = clampRectForState(
+      TOOL_DEFAULT_RECTS[kind],
+      'normal',
+      this.viewport.width,
+      this.viewport.height,
+      getWindowMinSize(kind),
+    )
     const window: ManagedWindow = {
       id: `tool:${kind}`,
       kind,
@@ -231,7 +286,13 @@ export const windowManager = reactive({
       title,
       parentId,
       state: 'normal',
-      rect: clampRectForState(baseRect, 'normal', this.viewport.width, this.viewport.height),
+      rect: clampRectForState(
+        baseRect,
+        'normal',
+        this.viewport.width,
+        this.viewport.height,
+        getWindowMinSize('device-detail'),
+      ),
       previousRect: null,
       zIndex: this.nextZIndex++,
       createdAt: Date.now(),
@@ -289,7 +350,13 @@ export const windowManager = reactive({
       title,
       parentId,
       state: 'normal',
-      rect: clampRectForState(baseRect, 'normal', this.viewport.width, this.viewport.height),
+      rect: clampRectForState(
+        baseRect,
+        'normal',
+        this.viewport.width,
+        this.viewport.height,
+        getWindowMinSize(kind),
+      ),
       previousRect: null,
       zIndex: this.nextZIndex++,
       createdAt: Date.now(),
@@ -313,7 +380,13 @@ export const windowManager = reactive({
   moveWindow(windowId: string, x: number, y: number) {
     const window = this.getWindow(windowId)
     if (!window || window.state === 'maximized') return
-    window.rect = clampRectForState({ ...window.rect, x, y }, window.state, this.viewport.width, this.viewport.height)
+    window.rect = clampRectForState(
+      { ...window.rect, x, y },
+      window.state,
+      this.viewport.width,
+      this.viewport.height,
+      getWindowMinSize(window.kind),
+    )
     window.updatedAt = Date.now()
     this.persist()
   },
@@ -321,7 +394,13 @@ export const windowManager = reactive({
   resizeWindow(windowId: string, rect: WindowRect) {
     const window = this.getWindow(windowId)
     if (!window || window.state === 'maximized') return
-    window.rect = clampRectForState(rect, window.state, this.viewport.width, this.viewport.height)
+    window.rect = clampRectForState(
+      rect,
+      window.state,
+      this.viewport.width,
+      this.viewport.height,
+      getWindowMinSize(window.kind),
+    )
     window.updatedAt = Date.now()
     this.persist()
   },
@@ -343,7 +422,13 @@ export const windowManager = reactive({
     } else {
       window.state = 'normal'
       if (window.previousRect) {
-        window.rect = clampRectForState(window.previousRect, 'normal', this.viewport.width, this.viewport.height)
+        window.rect = clampRectForState(
+          window.previousRect,
+          'normal',
+          this.viewport.width,
+          this.viewport.height,
+          getWindowMinSize(window.kind),
+        )
       }
       window.previousRect = null
     }
@@ -358,7 +443,13 @@ export const windowManager = reactive({
     if (window.state === 'maximized') {
       window.state = 'normal'
       if (window.previousRect) {
-        window.rect = clampRectForState(window.previousRect, 'normal', this.viewport.width, this.viewport.height)
+        window.rect = clampRectForState(
+          window.previousRect,
+          'normal',
+          this.viewport.width,
+          this.viewport.height,
+          getWindowMinSize(window.kind),
+        )
       }
       window.previousRect = null
     } else if (window.state === 'minimized') {
@@ -415,16 +506,29 @@ export const windowManager = reactive({
         if (!entry?.id || !entry?.kind || !entry?.title) continue
         if (NON_RESTORABLE_CHILD_KINDS.has(entry.kind as ChildWindowKind)) continue
         const state = entry.state === 'minimized' || entry.state === 'maximized' ? entry.state : 'normal'
-        const rect = clampRectForState(entry.rect, state, this.viewport.width, this.viewport.height)
+        const kind = entry.kind as WindowKind
+        const rect = clampRectForState(
+          entry.rect,
+          state,
+          this.viewport.width,
+          this.viewport.height,
+          getWindowMinSize(kind),
+        )
         loaded.push({
           id: String(entry.id),
-          kind: entry.kind,
+          kind,
           title: String(entry.title),
           parentId: entry.parentId ? String(entry.parentId) : null,
           state,
           rect,
           previousRect: entry.previousRect
-            ? clampRectForState(entry.previousRect, 'normal', this.viewport.width, this.viewport.height)
+            ? clampRectForState(
+                entry.previousRect,
+                'normal',
+                this.viewport.width,
+                this.viewport.height,
+                getWindowMinSize(kind),
+              )
             : null,
           zIndex: this.nextZIndex++,
           createdAt: Number(entry.createdAt || Date.now()),

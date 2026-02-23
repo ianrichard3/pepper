@@ -16,7 +16,8 @@ import type {
 } from '@/types/portability'
 
 const t = strings
-const OPTIONS_STORAGE_KEY = 'pepper.portability.options.v1'
+const OPTIONS_STORAGE_KEY = 'pepper.portability.options.v2'
+const LEGACY_OPTIONS_STORAGE_KEY = 'pepper.portability.options.v1'
 const { canExport, canImportPortability } = useEntitlements()
 
 const props = withDefaults(defineProps<{
@@ -28,11 +29,11 @@ const props = withDefaults(defineProps<{
 })
 
 const exportScopes: Array<{ value: ExportScope; label: string; hint: string }> = [
-  { value: 'ALL', label: 'All data', hint: 'Exports devices, patchbay, cables, and configurations.' },
+  { value: 'ALL', label: 'All data', hint: 'Exports devices, patchbay, connections, and configurations.' },
   { value: 'DEVICES_ONLY', label: 'Devices only', hint: 'Defaults to devices + ports.' },
   { value: 'SELECTED_DEVICES', label: 'Selected devices', hint: 'Export selected devices and selected dependencies.' },
   { value: 'PATCHBAY_ONLY', label: 'Patchbay only', hint: 'Only patchbay points and related metadata.' },
-  { value: 'CONNECTIONS_ONLY', label: 'Connections only', hint: 'Defaults to ports + patchbay points + patch cables.' },
+  { value: 'CONNECTIONS_ONLY', label: 'Connections only', hint: 'Defaults to ports + patchbay points + connections.' },
 ]
 
 const exportForm = reactive({
@@ -41,7 +42,7 @@ const exportForm = reactive({
   include: {
     ports: true,
     patchbay_points: true,
-    patch_cables: true,
+    connections: true,
     device_configurations: true,
   },
   loading: false,
@@ -64,10 +65,10 @@ const dragOver = ref(false)
 
 const importOptions = reactive<ImportApplyOptions>({
   mode: 'merge',
-  name_duplicates: 'rename',
-  patchbay_mapping_conflicts: 'remap_to_free',
-  patch_cable_conflicts: 'skip_conflicts',
-  config_conflicts: 'rename',
+  name_strategy: 'rename',
+  patchbay_mapping_strategy: 'remap_to_free',
+  patch_cable_strategy: 'skip_conflicts',
+  device_config_strategy: 'rename',
 })
 
 const showReplaceConfirm = ref(false)
@@ -157,8 +158,8 @@ const hasMissingDependencies = computed(() => {
 const hasFailStrategyRisk = computed(() => {
   if (!conflicts.value.length) return false
   return (
-    importOptions.patchbay_mapping_conflicts === 'fail' ||
-    importOptions.patch_cable_conflicts === 'fail'
+    importOptions.patchbay_mapping_strategy === 'fail' ||
+    importOptions.patch_cable_strategy === 'fail'
   )
 })
 
@@ -193,37 +194,43 @@ watch(
 
 onMounted(() => {
   const raw = window.localStorage.getItem(OPTIONS_STORAGE_KEY)
+    || window.localStorage.getItem(LEGACY_OPTIONS_STORAGE_KEY)
   if (!raw) return
   try {
-    const parsed = JSON.parse(raw)
+    const parsed = JSON.parse(raw) as Record<string, unknown>
     if (typeof parsed !== 'object' || !parsed) return
     if (parsed.mode === 'merge' || parsed.mode === 'replace') importOptions.mode = parsed.mode
+    const parsedNameStrategy = parsed.name_strategy ?? parsed.name_duplicates
     if (
-      parsed.name_duplicates === 'rename' ||
-      parsed.name_duplicates === 'skip' ||
-      parsed.name_duplicates === 'overwrite_if_fingerprint_match'
+      parsedNameStrategy === 'rename' ||
+      parsedNameStrategy === 'skip' ||
+      parsedNameStrategy === 'overwrite_if_fingerprint_match'
     ) {
-      importOptions.name_duplicates = parsed.name_duplicates
+      importOptions.name_strategy = parsedNameStrategy
     }
+    const parsedPatchbayStrategy = parsed.patchbay_mapping_strategy ?? parsed.patchbay_mapping_conflicts
     if (
-      parsed.patchbay_mapping_conflicts === 'remap_to_free' ||
-      parsed.patchbay_mapping_conflicts === 'skip_mapping' ||
-      parsed.patchbay_mapping_conflicts === 'fail'
+      parsedPatchbayStrategy === 'remap_to_free' ||
+      parsedPatchbayStrategy === 'skip_mapping' ||
+      parsedPatchbayStrategy === 'fail'
     ) {
-      importOptions.patchbay_mapping_conflicts = parsed.patchbay_mapping_conflicts
+      importOptions.patchbay_mapping_strategy = parsedPatchbayStrategy
     }
-    if (parsed.patch_cable_conflicts === 'skip_conflicts' || parsed.patch_cable_conflicts === 'fail') {
-      importOptions.patch_cable_conflicts = parsed.patch_cable_conflicts
+    const parsedPatchCableStrategy = parsed.patch_cable_strategy ?? parsed.patch_cable_conflicts
+    if (parsedPatchCableStrategy === 'skip_conflicts' || parsedPatchCableStrategy === 'fail') {
+      importOptions.patch_cable_strategy = parsedPatchCableStrategy
     }
+    const parsedConfigStrategy = parsed.device_config_strategy ?? parsed.config_conflicts
     if (
-      parsed.config_conflicts === 'rename' ||
-      parsed.config_conflicts === 'skip' ||
-      parsed.config_conflicts === 'overwrite_if_fingerprint_match'
+      parsedConfigStrategy === 'rename' ||
+      parsedConfigStrategy === 'skip' ||
+      parsedConfigStrategy === 'overwrite_if_fingerprint_match'
     ) {
-      importOptions.config_conflicts = parsed.config_conflicts
+      importOptions.device_config_strategy = parsedConfigStrategy
     }
   } catch {
     window.localStorage.removeItem(OPTIONS_STORAGE_KEY)
+    window.localStorage.removeItem(LEGACY_OPTIONS_STORAGE_KEY)
   }
 })
 
@@ -239,27 +246,27 @@ function applyDefaultIncludeForScope(scope: ExportScope) {
   if (scope === 'ALL') {
     exportForm.include.ports = true
     exportForm.include.patchbay_points = true
-    exportForm.include.patch_cables = true
+    exportForm.include.connections = true
     exportForm.include.device_configurations = true
     return
   }
   if (scope === 'DEVICES_ONLY' || scope === 'SELECTED_DEVICES') {
     exportForm.include.ports = true
     exportForm.include.patchbay_points = false
-    exportForm.include.patch_cables = false
+    exportForm.include.connections = false
     exportForm.include.device_configurations = true
     return
   }
   if (scope === 'PATCHBAY_ONLY') {
     exportForm.include.ports = false
     exportForm.include.patchbay_points = true
-    exportForm.include.patch_cables = false
+    exportForm.include.connections = false
     exportForm.include.device_configurations = false
     return
   }
   exportForm.include.ports = true
   exportForm.include.patchbay_points = true
-  exportForm.include.patch_cables = true
+  exportForm.include.connections = true
   exportForm.include.device_configurations = false
 }
 
@@ -308,7 +315,7 @@ async function runExport() {
     const payload = {
       scope: exportForm.scope,
       include: { ...exportForm.include },
-      selected_device_ids:
+      device_ids:
         exportForm.scope === 'SELECTED_DEVICES' ? exportForm.selectedDeviceIds : undefined,
     }
 
@@ -448,10 +455,10 @@ async function executeApply() {
       bundle: importParsedBundle.value,
       options: {
         mode: importOptions.mode,
-        name_duplicates: importOptions.name_duplicates,
-        patchbay_mapping_conflicts: importOptions.patchbay_mapping_conflicts,
-        patch_cable_conflicts: importOptions.patch_cable_conflicts,
-        config_conflicts: importOptions.config_conflicts,
+        name_strategy: importOptions.name_strategy,
+        patchbay_mapping_strategy: importOptions.patchbay_mapping_strategy,
+        patch_cable_strategy: importOptions.patch_cable_strategy,
+        device_config_strategy: importOptions.device_config_strategy,
       },
     })
     importStep.value = 'result'
@@ -580,8 +587,8 @@ function toTitleCase(value: string): string {
             Patchbay points
           </label>
           <label>
-            <input v-model="exportForm.include.patch_cables" type="checkbox" />
-            Patch cables
+            <input v-model="exportForm.include.connections" type="checkbox" />
+            Connections
           </label>
           <label>
             <input v-model="exportForm.include.device_configurations" type="checkbox" />
@@ -683,7 +690,7 @@ function toTitleCase(value: string): string {
               <strong>{{ type }} ({{ items.length }})</strong>
               <ul>
                 <li v-for="(item, index) in items" :key="`${type}-${index}`">
-                  {{ item.message || 'Conflict detected.' }}
+                  {{ item.detail || item.message || 'Conflict detected.' }}
                 </li>
               </ul>
             </div>
@@ -720,7 +727,7 @@ function toTitleCase(value: string): string {
 
             <label>
               Name duplicates
-              <select v-model="importOptions.name_duplicates">
+              <select v-model="importOptions.name_strategy">
                 <option value="rename">Rename (recommended)</option>
                 <option value="skip">Skip</option>
                 <option value="overwrite_if_fingerprint_match">Overwrite if fingerprint matches</option>
@@ -729,7 +736,7 @@ function toTitleCase(value: string): string {
 
             <label>
               Patchbay mapping conflicts
-              <select v-model="importOptions.patchbay_mapping_conflicts">
+              <select v-model="importOptions.patchbay_mapping_strategy">
                 <option value="remap_to_free">Remap to free (recommended)</option>
                 <option value="skip_mapping">Skip mapping</option>
                 <option value="fail">Fail on conflict</option>
@@ -737,8 +744,8 @@ function toTitleCase(value: string): string {
             </label>
 
             <label>
-              Patch cable conflicts
-              <select v-model="importOptions.patch_cable_conflicts">
+              Connection conflicts
+              <select v-model="importOptions.patch_cable_strategy">
                 <option value="skip_conflicts">Skip conflicts (recommended)</option>
                 <option value="fail">Fail on conflict</option>
               </select>
@@ -746,7 +753,7 @@ function toTitleCase(value: string): string {
 
             <label>
               Device config conflicts
-              <select v-model="importOptions.config_conflicts">
+              <select v-model="importOptions.device_config_strategy">
                 <option value="rename">Rename (recommended)</option>
                 <option value="skip">Skip</option>
                 <option value="overwrite_if_fingerprint_match">Overwrite if fingerprint matches</option>

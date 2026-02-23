@@ -8,13 +8,13 @@ export type ExportScope =
 export interface ExportInclude {
   ports: boolean
   patchbay_points: boolean
-  patch_cables: boolean
+  connections: boolean
   device_configurations: boolean
 }
 
 export interface ExportBundlePayload {
   scope: ExportScope
-  selected_device_ids?: number[]
+  device_ids?: number[]
   include: ExportInclude
 }
 
@@ -26,7 +26,7 @@ export interface Manifest {
     [key: string]: unknown
   }
   scope?: ExportScope | string
-  included?: ExportInclude
+  included?: string[]
   [key: string]: unknown
 }
 
@@ -82,6 +82,16 @@ export interface BundlePatchCable {
   [key: string]: unknown
 }
 
+export interface BundleConnection {
+  export_id: string
+  a_type?: string
+  a_export_id?: string
+  b_type?: string
+  b_export_id?: string
+  is_active?: boolean
+  [key: string]: unknown
+}
+
 export interface BundleDeviceConfiguration {
   export_id: string | number
   device_export_id?: string | null
@@ -96,6 +106,8 @@ export interface PortabilityEntities {
   devices?: BundleDevice[]
   ports?: BundlePort[]
   patchbay_points?: BundlePatchbayPoint[]
+  connections?: BundleConnection[]
+  // Legacy import compatibility
   patch_cables?: BundlePatchCable[]
   device_configurations?: BundleDeviceConfiguration[]
   [key: string]: unknown
@@ -110,7 +122,13 @@ export interface PortabilityBundle {
 export interface PortabilityConflict {
   type: string
   message?: string
+  detail?: string
   severity?: 'warning' | 'error' | string
+  entity?: string
+  incoming_name?: string
+  existing_id?: string | number | null
+  target_patchbay_point_id?: number | null
+  incoming?: Record<string, unknown> | null
   entity_type?: string
   entity_key?: string
   details?: Record<string, unknown>
@@ -151,10 +169,10 @@ export type ConfigConflictStrategy = 'rename' | 'skip' | 'overwrite_if_fingerpri
 
 export interface ImportApplyOptions {
   mode: ImportMode
-  name_duplicates: NameDuplicateStrategy
-  patchbay_mapping_conflicts: PatchbayMappingStrategy
-  patch_cable_conflicts: PatchCableConflictStrategy
-  config_conflicts: ConfigConflictStrategy
+  name_strategy: NameDuplicateStrategy
+  patchbay_mapping_strategy: PatchbayMappingStrategy
+  patch_cable_strategy: PatchCableConflictStrategy
+  device_config_strategy: ConfigConflictStrategy
 }
 
 export interface ImportApplyPayload {
@@ -163,16 +181,20 @@ export interface ImportApplyPayload {
 }
 
 export interface ImportApplyReport {
-  created?: number
-  updated?: number
-  skipped?: number
+  created?: number | Record<string, number>
+  updated?: number | Record<string, number>
+  skipped?: number | Record<string, number>
   resolved_conflicts?: number
+  conflicts_resolved?: number
   id_maps?: Record<string, Record<string, string | number>>
+  warnings?: string[]
   [key: string]: unknown
 }
 
 export interface ImportApplyResponse {
+  result?: string
   report?: ImportApplyReport
+  id_map?: Record<string, Record<string, string | number>>
   id_maps?: Record<string, Record<string, string | number>>
   [key: string]: unknown
 }

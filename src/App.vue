@@ -6,7 +6,7 @@ import { registerTokenGetter } from './lib/authToken'
 import { useAuthz } from './lib/authz'
 import { useEntitlements } from './lib/useEntitlements'
 import { quotaStore } from './stores/quota'
-import { windowManager, type ManagedWindow, type ToolWindowKind } from './stores/windowManager'
+import { windowManager, getWindowMinSize, type ManagedWindow, type ToolWindowKind } from './stores/windowManager'
 import PatchBayGrid from './components/PatchBayGrid.vue'
 import DevicesManager from './components/DevicesManager.vue'
 import RoutingCanvas from './components/RoutingCanvas.vue'
@@ -378,6 +378,8 @@ const windowVariant = (window: ManagedWindow): 'tool' | 'utility' | 'confirm' =>
   return 'utility'
 }
 
+const floatingWindowMinSize = (window: ManagedWindow) => getWindowMinSize(window.kind)
+
 const payloadFunction = <T extends (...args: any[]) => unknown>(window: ManagedWindow, key: string): T | undefined => {
   const candidate = window.payload[key]
   if (typeof candidate !== 'function') return undefined
@@ -583,6 +585,8 @@ onBeforeUnmount(() => {
                 :state="window.state"
                 :z-index="window.zIndex"
                 :variant="windowVariant(window)"
+                :min-width="floatingWindowMinSize(window).width"
+                :min-height="floatingWindowMinSize(window).height"
                 @focus="windowManager.focusWindow(window.id)"
                 @close="closeWindow(window)"
                 @move="({ x, y }) => windowManager.moveWindow(window.id, x, y)"

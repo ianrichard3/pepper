@@ -21,7 +21,7 @@ describe('portabilityApi', () => {
       include: {
         ports: true,
         patchbay_points: true,
-        patch_cables: true,
+        connections: true,
         device_configurations: true,
       },
     })
@@ -33,7 +33,36 @@ describe('portabilityApi', () => {
         include: {
           ports: true,
           patchbay_points: true,
-          patch_cables: true,
+          connections: true,
+          device_configurations: true,
+        },
+      }),
+    })
+  })
+
+  it('calls export endpoint with selected device ids for selected-devices scope', async () => {
+    requestJson.mockResolvedValue({ manifest: { version: '1' } })
+
+    await exportBundle({
+      scope: 'SELECTED_DEVICES',
+      device_ids: [3, 7],
+      include: {
+        ports: true,
+        patchbay_points: false,
+        connections: false,
+        device_configurations: true,
+      },
+    })
+
+    expect(requestJson).toHaveBeenCalledWith('/api/portability/export', {
+      method: 'POST',
+      body: JSON.stringify({
+        scope: 'SELECTED_DEVICES',
+        device_ids: [3, 7],
+        include: {
+          ports: true,
+          patchbay_points: false,
+          connections: false,
           device_configurations: true,
         },
       }),
@@ -57,10 +86,10 @@ describe('portabilityApi', () => {
       bundle: { manifest: { version: '1' } },
       options: {
         mode: 'merge',
-        name_duplicates: 'rename',
-        patchbay_mapping_conflicts: 'remap_to_free',
-        patch_cable_conflicts: 'skip_conflicts',
-        config_conflicts: 'rename',
+        name_strategy: 'rename',
+        patchbay_mapping_strategy: 'remap_to_free',
+        patch_cable_strategy: 'skip_conflicts',
+        device_config_strategy: 'rename',
       },
     } as const
     requestJson.mockResolvedValue({ report: { created: 1 } })
