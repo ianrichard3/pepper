@@ -18,11 +18,8 @@ export interface PatchBayNode {
   name: string;
   description: string;
   type: string;
-  location?: string | null;
   panel?: string | null;
   connector?: string | null;
-  row?: number | null;
-  col?: number | null;
   tag?: string | null;
 }
 
@@ -197,11 +194,8 @@ function apiPatchbayToNode(apiPoint: ApiPatchbayPoint): PatchBayNode {
     name: apiPoint.name,
     description: apiPoint.description,
     type: apiPoint.type,
-    location: apiPoint.location ?? null,
     panel: apiPoint.panel ?? null,
     connector: apiPoint.connector ?? null,
-    row: apiPoint.row ?? null,
-    col: apiPoint.col ?? null,
     tag: apiPoint.tag ?? null,
   }
 }
@@ -912,11 +906,8 @@ export const store = reactive({
     name: string
     description?: string
     type?: string
-    location?: string | null
     panel?: string | null
     connector?: string | null
-    row?: number | null
-    col?: number | null
     tag?: string | null
   }): Promise<PatchBayNode> {
     requireFeatureAccess('patchbay_edit')
@@ -939,11 +930,8 @@ export const store = reactive({
       name: string
       description: string
       type: string
-      location: string | null
       panel: string | null
       connector: string | null
-      row: number | null
-      col: number | null
       tag: string | null
     }>
   ): Promise<PatchBayNode> {

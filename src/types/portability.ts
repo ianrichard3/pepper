@@ -65,11 +65,8 @@ export interface BundlePatchbayPoint {
   name?: string | null
   description?: string | null
   type?: string | null
-  location?: string | null
   panel?: string | null
   connector?: string | null
-  row?: number | null
-  col?: number | null
   fingerprint?: string
   [key: string]: unknown
 }

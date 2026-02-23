@@ -24,6 +24,12 @@ const gridSearchQuery = ref('')
 const localRows = ref(store.patchbayRows)
 const localCols = ref(store.patchbayCols)
 const isSavingLayout = ref(false)
+const inlineDeleteTarget = ref<PatchBayNode | null>(null)
+const inlineDeleteConfirmInput = ref('')
+const inlineDeleteLoading = ref(false)
+const inlineCanConfirmDelete = computed(() => {
+  return !!inlineDeleteTarget.value && !inlineDeleteLoading.value && inlineDeleteConfirmInput.value.trim() === t.confirm.deleteKeyword
+})
 
 const showForm = ref(false)
 const formMode = ref<'add' | 'edit'>('add')
@@ -33,10 +39,7 @@ const formState = reactive({
   description: '',
   type: 'standard',
   panel: '',
-  row: '',
-  col: '',
   connector: '',
-  location: '',
   tag: '',
 })
 const tagInput = ref('')
@@ -81,15 +84,7 @@ const tagColorByName = computed(() => {
 })
 
 const panelOrderedNodes = computed(() => {
-  return [...nodes.value].sort((a, b) => {
-    const aRow = a.row ?? Number.MAX_SAFE_INTEGER
-    const bRow = b.row ?? Number.MAX_SAFE_INTEGER
-    if (aRow !== bRow) return aRow - bRow
-    const aCol = a.col ?? Number.MAX_SAFE_INTEGER
-    const bCol = b.col ?? Number.MAX_SAFE_INTEGER
-    if (aCol !== bCol) return aCol - bCol
-    return a.id - b.id
-  })
+  return [...nodes.value].sort((a, b) => a.id - b.id)
 })
 
 const panelSlots = computed(() => {
@@ -115,7 +110,6 @@ const filteredListNodes = computed(() => {
       node.type,
       node.panel || '',
       node.connector || '',
-      node.location || '',
       node.tag || '',
       connection?.device.name || '',
       connection?.port.label || '',
@@ -541,10 +535,7 @@ const resetForm = () => {
   formState.description = ''
   formState.type = 'standard'
   formState.panel = ''
-  formState.row = ''
-  formState.col = ''
   formState.connector = ''
-  formState.location = ''
   formState.tag = ''
   tagInput.value = ''
   tagDraftColor.value = TAG_SWATCHES[0]
@@ -552,22 +543,41 @@ const resetForm = () => {
 }
 
 const openAdd = () => {
+  if (props.floatingMode) {
+    const parentWindowId = windowManager.getToolWindow('patchbay')?.id || 'tool:patchbay'
+    windowManager.openChildWindow(
+      parentWindowId,
+      'patchbay-point-add-edit',
+      t.patchbay.addPoint,
+      { mode: 'add', parentWindowId },
+      { id: 'patchbay-point-add-edit:add' },
+    )
+    return
+  }
   formMode.value = 'add'
   resetForm()
   showForm.value = true
 }
 
 const openEdit = (node: PatchBayNode) => {
+  if (props.floatingMode) {
+    const parentWindowId = windowManager.getToolWindow('patchbay')?.id || 'tool:patchbay'
+    windowManager.openChildWindow(
+      parentWindowId,
+      'patchbay-point-add-edit',
+      `${t.patchbay.editPoint} #${node.id}`,
+      { mode: 'edit', patchbayId: node.id, parentWindowId },
+      { id: `patchbay-point-add-edit:${node.id}` },
+    )
+    return
+  }
   formMode.value = 'edit'
   formState.id = node.id
   formState.name = node.name
   formState.description = node.description
   formState.type = node.type
   formState.panel = node.panel || ''
-  formState.row = node.row ? String(node.row) : ''
-  formState.col = node.col ? String(node.col) : ''
   formState.connector = node.connector || ''
-  formState.location = node.location || ''
   formState.tag = node.tag || ''
   tagInput.value = node.tag || ''
   tagDraftColor.value = getTagColor(node.tag) || TAG_SWATCHES[0]
@@ -598,10 +608,7 @@ const saveForm = async () => {
     description: formState.description.trim(),
     type: formState.type.trim() || 'standard',
     panel: formState.panel.trim() || null,
-    row: formState.row.trim() ? Number(formState.row) : null,
-    col: formState.col.trim() ? Number(formState.col) : null,
     connector: formState.connector.trim() || null,
-    location: formState.location.trim() || null,
     tag: (formState.tag || tagInput.value).trim() || null,
   }
   if (payload.tag) {
@@ -610,10 +617,10 @@ const saveForm = async () => {
   try {
     if (formMode.value === 'add') {
       await store.createPatchbayPoint(payload)
-      store.pushToast({ type: 'success', message: 'Patchbay point created.' })
+      store.pushToast({ type: 'success', message: t.toast.patchbayPointCreated })
     } else {
       await store.updatePatchbayPoint(formState.id, payload)
-      store.pushToast({ type: 'success', message: 'Patchbay point updated.' })
+      store.pushToast({ type: 'success', message: t.toast.patchbayPointUpdated })
     }
     showForm.value = false
   } catch (err: any) {
@@ -622,20 +629,48 @@ const saveForm = async () => {
 }
 
 const removePoint = async (node: PatchBayNode) => {
-  if (!window.confirm(`Delete patchbay point #${node.id}?`)) return
+  if (props.floatingMode) {
+    const parentWindowId = windowManager.getToolWindow('patchbay')?.id || 'tool:patchbay'
+    windowManager.openChildWindow(
+      parentWindowId,
+      'patchbay-point-delete-confirm',
+      t.confirm.deletePatchbayPointTitle,
+      {
+        patchbayId: node.id,
+        patchbayName: node.name,
+      },
+      { id: `patchbay-point-delete-confirm:${node.id}` },
+    )
+    return
+  }
+  inlineDeleteTarget.value = node
+  inlineDeleteConfirmInput.value = ''
+}
+
+const closeInlineDeleteModal = () => {
+  inlineDeleteTarget.value = null
+  inlineDeleteConfirmInput.value = ''
+}
+
+const confirmInlineDelete = async () => {
+  if (!inlineDeleteTarget.value || !inlineCanConfirmDelete.value) return
+  inlineDeleteLoading.value = true
   try {
-    const result = await store.deletePatchbayPoint(node.id)
+    const result = await store.deletePatchbayPoint(inlineDeleteTarget.value.id)
     if (result.deleted) {
-      store.pushToast({ type: 'success', message: 'Patchbay point deleted.' })
+      store.pushToast({ type: 'success', message: t.toast.patchbayPointDeleted })
+      closeInlineDeleteModal()
       return
     }
     if (result.blocked) {
       store.pushToast({ type: 'error', message: t.patchbay.deleteBlocked })
       return
     }
-    store.pushToast({ type: 'error', message: result.message || t.toast.loadFailed })
+    store.pushToast({ type: 'error', message: result.message || t.toast.patchbayPointDeleteFailed })
   } catch (err: any) {
-    store.pushToast({ type: 'error', message: err?.message || t.toast.loadFailed })
+    store.pushToast({ type: 'error', message: err?.message || t.toast.patchbayPointDeleteFailed })
+  } finally {
+    inlineDeleteLoading.value = false
   }
 }
 
@@ -766,10 +801,7 @@ const onPatchbayViewChange = (value: string) => {
             <th>{{ t.patchbay.fullName }}</th>
             <th>{{ t.patchbay.typeLabel }}</th>
             <th>Panel</th>
-            <th>Row</th>
-            <th>Col</th>
             <th>Connector</th>
-            <th>Location</th>
             <th>{{ t.patchbay.tagLabel }}</th>
             <th>Status</th>
             <th>{{ t.patchbay.connectedToLabel }}</th>
@@ -782,10 +814,7 @@ const onPatchbayViewChange = (value: string) => {
             <td>{{ node.name }}</td>
             <td>{{ node.type }}</td>
             <td>{{ node.panel || '-' }}</td>
-            <td>{{ node.row || '-' }}</td>
-            <td>{{ node.col || '-' }}</td>
             <td>{{ node.connector || '-' }}</td>
-            <td>{{ node.location || '-' }}</td>
             <td>
               <span v-if="node.tag" class="tag-chip" :style="tagStyle(node.tag)">{{ node.tag }}</span>
               <span v-else>-</span>
@@ -816,10 +845,7 @@ const onPatchbayViewChange = (value: string) => {
           <label>Name <input v-model="formState.name" /></label>
           <label>Type <input v-model="formState.type" /></label>
           <label>Panel <input v-model="formState.panel" /></label>
-          <label>Row <input v-model="formState.row" type="number" min="1" /></label>
-          <label>Col <input v-model="formState.col" type="number" min="1" /></label>
           <label>Connector <input v-model="formState.connector" /></label>
-          <label>Location <input v-model="formState.location" /></label>
           <div class="tag-field" ref="tagFieldRef">
             <label>
               {{ t.patchbay.tagLabel }}
@@ -872,6 +898,26 @@ const onPatchbayViewChange = (value: string) => {
         <div class="form-actions">
           <button class="secondary" @click="showForm = false">{{ t.confirm.cancel }}</button>
           <button @click="saveForm">{{ t.confirm.confirm }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div v-if="inlineDeleteTarget && viewMode === 'list'" class="modal-backdrop" @click.self="closeInlineDeleteModal">
+      <div class="modal delete-modal">
+        <h3>{{ t.confirm.deletePatchbayPointTitle }}</h3>
+        <p>{{ t.confirm.deletePatchbayPointMessage(inlineDeleteTarget.name, inlineDeleteTarget.id) }}</p>
+        <p class="delete-help">{{ t.confirm.deleteTypeToConfirm }}</p>
+        <input
+          v-model="inlineDeleteConfirmInput"
+          class="delete-confirm-input"
+          :placeholder="t.confirm.deleteInputPlaceholder"
+          :disabled="inlineDeleteLoading"
+        />
+        <div class="form-actions">
+          <button class="secondary" :disabled="inlineDeleteLoading" @click="closeInlineDeleteModal">{{ t.confirm.cancel }}</button>
+          <button class="danger-action" :disabled="!inlineCanConfirmDelete" @click="confirmInlineDelete">
+            {{ inlineDeleteLoading ? t.confirm.deleting : t.confirm.confirm }}
+          </button>
         </div>
       </div>
     </div>
@@ -1435,6 +1481,37 @@ const onPatchbayViewChange = (value: string) => {
   background: var(--surface-2);
   color: var(--text-primary);
   cursor: pointer;
+}
+
+.delete-modal {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.delete-help {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.delete-confirm-input {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-2);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.danger-action {
+  border-color: rgba(176, 75, 61, 0.45) !important;
+  background: rgba(176, 75, 61, 0.9) !important;
+  color: #fff !important;
+}
+
+.danger-action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 @media (max-width: 980px) {

@@ -4,7 +4,9 @@ export type ToolWindowKind = 'patchbay' | 'devices' | 'graph' | 'portability' | 
 export type ChildWindowKind =
   | 'device-detail'
   | 'devices-add-edit'
+  | 'patchbay-point-add-edit'
   | 'patchbay-point-detail'
+  | 'patchbay-point-delete-confirm'
   | 'patchbay-link-search'
   | 'patchbay-overwrite-confirm'
   | 'canvas-add-item'
@@ -67,6 +69,8 @@ const CHILD_KIND_LIMIT = 3
 const NON_RESTORABLE_CHILD_KINDS = new Set<ChildWindowKind>([
   'devices-add-edit',
   'devices-delete-confirm',
+  'patchbay-point-add-edit',
+  'patchbay-point-delete-confirm',
   'patchbay-link-search',
   'patchbay-overwrite-confirm',
   'canvas-add-item',
@@ -96,14 +100,16 @@ const WINDOW_MIN_SIZES: Record<WindowKind, WindowMinSize> = {
   admin: { width: 840, height: 560 },
   'device-detail': { width: 520, height: 360 },
   'devices-add-edit': { width: 760, height: 520 },
+  'patchbay-point-add-edit': { width: 760, height: 520 },
   'patchbay-point-detail': { width: 460, height: 320 },
+  'patchbay-point-delete-confirm': { width: 480, height: 300 },
   'patchbay-link-search': { width: 520, height: 360 },
   'patchbay-overwrite-confirm': { width: 460, height: 260 },
   'canvas-add-item': { width: 500, height: 340 },
   'canvas-select-port': { width: 460, height: 320 },
   'canvas-intent-matches': { width: 640, height: 420 },
   'portability-replace-confirm': { width: 460, height: 260 },
-  'devices-delete-confirm': { width: 460, height: 260 },
+  'devices-delete-confirm': { width: 480, height: 300 },
 }
 
 export function getWindowMinSize(kind: WindowKind): WindowMinSize {
@@ -186,8 +192,12 @@ export const windowManager = reactive({
   },
 
   setViewport(width: number, height: number) {
-    this.viewport.width = Math.max(width, 480)
-    this.viewport.height = Math.max(height, 320)
+    const nextWidth = Math.max(width, 480)
+    const nextHeight = Math.max(height, 320)
+    if (this.viewport.width === nextWidth && this.viewport.height === nextHeight) return
+
+    this.viewport.width = nextWidth
+    this.viewport.height = nextHeight
     this.windows = this.windows.map((window) => {
       if (window.state === 'maximized') return window
       return {

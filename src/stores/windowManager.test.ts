@@ -85,28 +85,44 @@ describe('windowManager bounds', () => {
     const parent = windowManager.openTool('graph', 'Routing Canvas')
     const selectPort = windowManager.openChildWindow(parent.id, 'canvas-select-port', 'Select Port', {}, { id: 'test:select-port' })
     const intentMatches = windowManager.openChildWindow(parent.id, 'canvas-intent-matches', 'Intent Matches', {}, { id: 'test:intent-matches' })
+    const patchbayPointEditor = windowManager.openChildWindow(parent.id, 'patchbay-point-add-edit', 'Patchbay Point', {}, { id: 'test:patchbay-point-add-edit' })
 
     windowManager.resizeWindow(selectPort.id, { x: 0, y: 0, width: 100, height: 100 })
     windowManager.resizeWindow(intentMatches.id, { x: 0, y: 0, width: 100, height: 100 })
+    windowManager.resizeWindow(patchbayPointEditor.id, { x: 0, y: 0, width: 100, height: 100 })
 
     const selectPortResized = windowManager.getWindow(selectPort.id)
     const intentMatchesResized = windowManager.getWindow(intentMatches.id)
+    const patchbayPointEditorResized = windowManager.getWindow(patchbayPointEditor.id)
 
     expect(selectPortResized?.rect.width).toBe(460)
     expect(selectPortResized?.rect.height).toBe(320)
     expect(intentMatchesResized?.rect.width).toBe(640)
     expect(intentMatchesResized?.rect.height).toBe(420)
+    expect(patchbayPointEditorResized?.rect.width).toBe(760)
+    expect(patchbayPointEditorResized?.rect.height).toBe(520)
   })
 
   it('clamps confirm child windows to confirm minimum sizes', () => {
     const parent = windowManager.openTool('devices', 'Devices')
     const confirm = windowManager.openChildWindow(parent.id, 'devices-delete-confirm', 'Delete Device', {}, { id: 'test:delete-confirm' })
+    const patchbayDeleteConfirm = windowManager.openChildWindow(
+      parent.id,
+      'patchbay-point-delete-confirm',
+      'Delete Patch Point',
+      {},
+      { id: 'test:patchbay-delete-confirm' },
+    )
 
     windowManager.resizeWindow(confirm.id, { x: 0, y: 0, width: 100, height: 100 })
+    windowManager.resizeWindow(patchbayDeleteConfirm.id, { x: 0, y: 0, width: 100, height: 100 })
     const resized = windowManager.getWindow(confirm.id)
+    const patchbayResized = windowManager.getWindow(patchbayDeleteConfirm.id)
 
-    expect(resized?.rect.width).toBe(460)
-    expect(resized?.rect.height).toBe(260)
+    expect(resized?.rect.width).toBe(480)
+    expect(resized?.rect.height).toBe(300)
+    expect(patchbayResized?.rect.width).toBe(480)
+    expect(patchbayResized?.rect.height).toBe(300)
   })
 
   it('re-clamps hydrated windows using per-kind minimums', () => {

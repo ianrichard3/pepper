@@ -22,6 +22,8 @@ import GraphAddNodeWindow from './components/GraphAddNodeWindow.vue'
 import GraphConnectWindow from './components/GraphConnectWindow.vue'
 import GraphIntentMatchesWindow from './components/GraphIntentMatchesWindow.vue'
 import PatchbayPointDetailWindow from './components/PatchbayPointDetailWindow.vue'
+import PatchbayPointAddEditWindow from './components/PatchbayPointAddEditWindow.vue'
+import PatchbayPointDeleteConfirmWindow from './components/PatchbayPointDeleteConfirmWindow.vue'
 import PatchbayLinkSearchWindow from './components/PatchbayLinkSearchWindow.vue'
 import PatchbayOverwriteConfirmWindow from './components/PatchbayOverwriteConfirmWindow.vue'
 import PortabilityReplaceConfirmWindow from './components/PortabilityReplaceConfirmWindow.vue'
@@ -347,6 +349,8 @@ const windowComponentKey = (window: ManagedWindow) => {
   if (window.kind === 'admin') return 'admin'
   if (window.kind === 'device-detail') return 'device-detail'
   if (window.kind === 'patchbay-point-detail') return 'patchbay-point-detail'
+  if (window.kind === 'patchbay-point-add-edit') return 'patchbay-point-add-edit'
+  if (window.kind === 'patchbay-point-delete-confirm') return 'patchbay-point-delete-confirm'
   if (window.kind === 'patchbay-link-search') return 'patchbay-link-search'
   if (window.kind === 'patchbay-overwrite-confirm') return 'patchbay-overwrite-confirm'
   if (window.kind === 'devices-add-edit') return 'devices-add-edit'
@@ -370,6 +374,7 @@ const windowVariant = (window: ManagedWindow): 'tool' | 'utility' | 'confirm' =>
   }
   if (
     window.kind === 'devices-delete-confirm' ||
+    window.kind === 'patchbay-point-delete-confirm' ||
     window.kind === 'patchbay-overwrite-confirm' ||
     window.kind === 'portability-replace-confirm'
   ) {
@@ -621,6 +626,20 @@ onBeforeUnmount(() => {
                   v-else-if="windowComponentKey(window) === 'patchbay-point-detail'"
                   :patchbay-id="Number(window.payload.patchbayId || 0)"
                   :parent-window-id="String(window.payload.parentWindowId || 'tool:patchbay')"
+                  @close="closeWindow(window)"
+                />
+                <PatchbayPointAddEditWindow
+                  v-else-if="windowComponentKey(window) === 'patchbay-point-add-edit'"
+                  :mode="String(window.payload.mode || 'add') === 'edit' ? 'edit' : 'add'"
+                  :patchbay-id="Number(window.payload.patchbayId || 0)"
+                  :parent-window-id="String(window.payload.parentWindowId || window.parentId || 'tool:patchbay')"
+                  @close="closeWindow(window)"
+                />
+                <PatchbayPointDeleteConfirmWindow
+                  v-else-if="windowComponentKey(window) === 'patchbay-point-delete-confirm'"
+                  :patchbay-id="Number(window.payload.patchbayId || 0)"
+                  :patchbay-name="String(window.payload.patchbayName || '')"
+                  :source-window-id="String(window.payload.sourceWindowId || '') || undefined"
                   @close="closeWindow(window)"
                 />
                 <PatchbayLinkSearchWindow

@@ -5,8 +5,8 @@ import { strings } from '@/ui/strings'
 import { windowManager } from '@/stores/windowManager'
 
 const props = defineProps<{
-  deviceId: number
-  deviceName: string
+  patchbayId: number
+  patchbayName: string
   sourceWindowId?: string
 }>()
 
@@ -17,22 +17,26 @@ const emit = defineEmits<{
 const t = strings
 const loading = ref(false)
 const confirmInput = ref('')
-const canConfirmDelete = computed(() => {
-  return !loading.value && confirmInput.value.trim() === t.confirm.deleteKeyword
-})
+const canConfirmDelete = computed(() => !loading.value && confirmInput.value.trim() === t.confirm.deleteKeyword)
 
 const confirmDelete = async () => {
   if (!canConfirmDelete.value) return
   loading.value = true
   try {
-    await store.deleteDevice(props.deviceId)
-    store.pushToast({ type: 'success', message: strings.toast.deviceDeleted })
-    if (props.sourceWindowId) {
-      windowManager.closeWindow(props.sourceWindowId)
+    const result = await store.deletePatchbayPoint(props.patchbayId)
+    if (result.deleted) {
+      store.pushToast({ type: 'success', message: t.toast.patchbayPointDeleted })
+      if (props.sourceWindowId) windowManager.closeWindow(props.sourceWindowId)
+      emit('close')
+      return
     }
-    emit('close')
+    if (result.blocked) {
+      store.pushToast({ type: 'error', message: t.patchbay.deleteBlocked })
+      return
+    }
+    store.pushToast({ type: 'error', message: result.message || t.toast.patchbayPointDeleteFailed })
   } catch (err: any) {
-    store.pushToast({ type: 'error', message: err?.message || strings.toast.deviceDeleteFailed })
+    store.pushToast({ type: 'error', message: err?.message || t.toast.patchbayPointDeleteFailed })
   } finally {
     loading.value = false
   }
@@ -41,8 +45,8 @@ const confirmDelete = async () => {
 
 <template>
   <section class="delete-confirm">
-    <h3 class="selectable-detail-text">{{ t.confirm.deleteDeviceTitle }}</h3>
-    <p class="selectable-detail-text">{{ t.confirm.deleteDeviceMessage(deviceName) }}</p>
+    <h3 class="selectable-detail-text">{{ t.confirm.deletePatchbayPointTitle }}</h3>
+    <p class="selectable-detail-text">{{ t.confirm.deletePatchbayPointMessage(patchbayName, patchbayId) }}</p>
     <p class="help selectable-detail-text">{{ t.confirm.deleteTypeToConfirm }}</p>
     <input
       v-model="confirmInput"

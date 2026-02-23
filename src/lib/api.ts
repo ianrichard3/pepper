@@ -10,11 +10,8 @@ export interface ApiPatchbayPoint {
   name: string
   description: string
   type: string
-  location?: string | null
   panel?: string | null
   connector?: string | null
-  row?: number | null
-  col?: number | null
   tag?: string | null
 }
 
@@ -524,11 +521,8 @@ export const api = {
     name: string
     description?: string
     type?: string
-    location?: string | null
     panel?: string | null
     connector?: string | null
-    row?: number | null
-    col?: number | null
     tag?: string | null
   }): Promise<ApiPatchbayPoint> {
     return requestJson<ApiPatchbayPoint>('/api/patchbay-points', {
@@ -543,11 +537,8 @@ export const api = {
       name: string
       description: string
       type: string
-      location: string | null
       panel: string | null
       connector: string | null
-      row: number | null
-      col: number | null
       tag: string | null
     }>
   ): Promise<ApiPatchbayPoint> {

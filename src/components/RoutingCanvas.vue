@@ -57,8 +57,6 @@ interface NodeTemplate {
   patchbayMeta?: {
     tag?: string | null;
     panel?: string | null;
-    row?: number | null;
-    col?: number | null;
   };
 }
 
@@ -510,8 +508,6 @@ const patchbayCatalog = computed<NodeTemplate[]>(() => {
     patchbayMeta: {
       tag: point.tag ?? null,
       panel: point.panel ?? null,
-      row: point.row ?? null,
-      col: point.col ?? null,
     },
     ports: [{ id: `pb-${point.id}`, name: 'Signal', direction: 'io' }],
   }))
@@ -555,8 +551,6 @@ const findPatchbayTemplateByHandle = (handle: string): NodeTemplate | null => {
     patchbayMeta: {
       tag: point.tag ?? null,
       panel: point.panel ?? null,
-      row: point.row ?? null,
-      col: point.col ?? null,
     },
     ports: [{ id: `pb-${point.id}`, name: 'Signal', direction: 'io' }],
   }
@@ -650,8 +644,6 @@ const patchbayLocationLabel = (item: NodeTemplate) => {
   if (!item.patchbayMeta) return null
   const parts: string[] = []
   if (item.patchbayMeta.panel) parts.push(`Panel ${item.patchbayMeta.panel}`)
-  if (typeof item.patchbayMeta.row === 'number') parts.push(`R${item.patchbayMeta.row}`)
-  if (typeof item.patchbayMeta.col === 'number') parts.push(`C${item.patchbayMeta.col}`)
   if (parts.length === 0) return null
   return parts.join(' • ')
 }

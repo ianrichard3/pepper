@@ -41,6 +41,9 @@ export const strings = {
     deleteDeviceTitle: 'Delete device?',
     deleteDeviceMessage: (deviceName: string) =>
       `Delete ${deviceName}? This cannot be undone.`,
+    deletePatchbayPointTitle: 'Delete patchbay point?',
+    deletePatchbayPointMessage: (name: string, id: number) =>
+      `Delete patchbay point #${id}${name ? ` (${name})` : ''}? This cannot be undone.`,
     deleteKeyword: 'delete',
     deleteTypeToConfirm: 'Type "delete" to confirm.',
     deleteInputPlaceholder: 'Type delete to confirm',
@@ -54,8 +57,12 @@ export const strings = {
     loadFailed: 'Failed to load data. Please retry.',
     deviceSaved: 'Device saved.',
     deviceDeleted: 'Device deleted.',
+    patchbayPointCreated: 'Patchbay point created.',
+    patchbayPointUpdated: 'Patchbay point updated.',
+    patchbayPointDeleted: 'Patchbay point deleted.',
     deviceSaveFailed: 'Failed to save device.',
     deviceDeleteFailed: 'Failed to delete device.',
+    patchbayPointDeleteFailed: 'Failed to delete patchbay point.',
     imageParseFailed: 'Image parsing failed. Try a clearer, well-lit photo.',
     sessionExpired: 'Sesión expirada. Por favor, volvé a iniciar sesión.',
     noPermission: 'No tenés permisos para acceder a estos datos.',

@@ -238,6 +238,10 @@ onBeforeUnmount(() => {
   padding: 10px;
 }
 
+.floating-window.variant-confirm .floating-window-body {
+  overflow: auto;
+}
+
 .resize-handle {
   position: absolute;
   background: transparent;
